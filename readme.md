@@ -5,9 +5,6 @@ A cross‑platform desktop application built with PyQt5 that records or loads au
 | Light Theme | Dark Theme |
 |------------|------------|
 | ![Light Theme](images/light-theme.png) | ![Dark Theme](images/dark-theme.png) |
-
-| Light Theme | Dark Theme |
-|------------|------------|
 | Main application window using the light theme. | Main application window using the dark theme. |
 
 Table of Contents
