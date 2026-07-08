@@ -1,0 +1,5 @@
+numpy
+PyQt5
+requests
+sounddevice
+soundfile
