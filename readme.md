@@ -1,7 +1,14 @@
 # Meeting Transcriber
 A cross‑platform desktop application built with PyQt5 that records or loads audio, transcribes it with Whisper, and generates a structured summary using a local large language model (LLM). All files are saved in timestamped folders under ./transcripts/.
 
-https://screenshot.png (replace with actual screenshot if available)
+
+| Light Theme | Dark Theme |
+|------------|------------|
+| ![Light Theme](images/light-theme.png) | ![Dark Theme](images/dark-theme.png) |
+
+| Light Theme | Dark Theme |
+|------------|------------|
+| Main application window using the light theme. | Main application window using the dark theme. |
 
 Table of Contents
 1. [Features](#Features)
@@ -154,7 +161,6 @@ python transcribe.py
 ```
 
 # GUI Overview
-https://gui-layout.png (illustrative)
 
 1. Audio Input – select your microphone device.
 2. Whisper Model – choose the model and toggle whisper‑cli mode.
