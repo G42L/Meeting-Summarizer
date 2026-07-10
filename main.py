@@ -97,7 +97,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Meeting Transcriber")
-        self.setMinimumSize(760, 760)
+        self.setMinimumSize(960, 760)
 
         self.button_height = 30
         self.button_radius = 8
