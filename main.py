@@ -75,7 +75,7 @@ class SourceRow(QWidget):
         layout.addWidget(self.mute_check)
 
         # Small, fixed-size VU meter just for this one source.
-        self.vu = vu_meters.BasicVUMeter(alpha=0.3)
+        self.vu = vu_meters.MiniLEDHorizontalVUMeter(alpha=0.10)
         self.vu.setMinimumHeight(20)
         self.vu.setMaximumHeight(24)
         self.vu.setMinimumWidth(90)
@@ -97,7 +97,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Meeting Transcriber")
-        self.setMinimumSize(960, 760)
+        self.setMinimumSize(760, 760)
 
         self.button_height = 30
         self.button_radius = 8
@@ -106,7 +106,7 @@ class MainWindow(QMainWindow):
         self.mixer = audio_engine.AudioMixerEngine()
         self.source_rows = {}      # name -> SourceRow
         self.is_recording = False
-        self.update_timer = None
+        self._reported_source_errors = {}  # name -> last-logged error, avoids spamming the log every tick
 
         # ---- Loaded-file playback state (unchanged from before) ----
         self.loaded_samples = None
@@ -140,6 +140,14 @@ class MainWindow(QMainWindow):
 
         self.job_count = 0
         self.update_config_lock()
+
+        # Drives live VU meters and the combined waveform continuously, for
+        # as long as the app runs -- not just while Record is pressed. Runs
+        # for every source from the moment it's added (see
+        # AudioMixerEngine.add_source), independent of self.is_recording.
+        self.monitor_timer = QTimer()
+        self.monitor_timer.timeout.connect(self.update_visualization)
+        self.monitor_timer.start(33)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -303,8 +311,7 @@ class MainWindow(QMainWindow):
         self.last_md_path = None
 
     def closeEvent(self, event):
-        if self.mixer.is_running:
-            self.mixer.stop()
+        self.mixer.shutdown()  # stop() alone would leave sources monitoring; we're closing for good
         if self.queue_worker:
             self.queue_worker.stop()
             self.queue_thread.quit()
@@ -409,6 +416,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Recording in progress", "Stop recording before removing a source.")
             return
         self.mixer.remove_source(name)
+        self._reported_source_errors.pop(name, None)
         row = self.source_rows.pop(name, None)
         if row is not None:
             self.sources_layout.removeWidget(row)
@@ -445,7 +453,7 @@ class MainWindow(QMainWindow):
         if self.playback_timer and self.playback_timer.isActive():
             self.playback_timer.stop()
             self.playback_timer = None
-        self.loaded_samples = None
+        self.loaded_samples = None  # hand the combined waveform/VU back to live monitoring
 
         self.is_recording = True
         self.dev_group.setEnabled(False)
@@ -461,17 +469,12 @@ class MainWindow(QMainWindow):
 
         for err in errors:
             self.log_text.append(f"⚠️ Source failed to start: {err}")
-
-        self.update_timer = QTimer()
-        self.update_timer.timeout.connect(self.update_visualization)
-        self.update_timer.start(33)
+        # No per-recording timer to start here -- self.monitor_timer already
+        # runs continuously and mixer.tick() now accumulates automatically
+        # because self.mixer.start() just flipped is_running to True.
 
     def stop_recording(self):
-        if self.update_timer:
-            self.update_timer.stop()
-            self.update_timer = None
-
-        mixed_audio = self.mixer.stop()
+        mixed_audio = self.mixer.stop()  # sources keep running; monitoring continues
         self.is_recording = False
         self.dev_group.setEnabled(True)
 
@@ -498,36 +501,48 @@ class MainWindow(QMainWindow):
 
         self._add_job_from_audio(str(audio_file), output_dir=output_dir)
 
-        self.waveform.update_buffer([])
-        self.vumeter.update_level(0)
-        for row in self.source_rows.values():
-            row.vu.update_level(0)
+        # Deliberately NOT blanking the waveform/VU meters here -- live
+        # monitoring keeps running via self.monitor_timer, so they should
+        # carry straight on showing current levels instead of flashing to zero.
 
         self.load_btn.setEnabled(True)
         self.update_config_lock()
         self.reset_ui()
 
     def update_visualization(self):
-        """Advance the mixer by one tick and refresh the combined + per-source VU meters."""
-        if not self.is_recording:
-            return
+        """
+        Advance the mixer by one tick and refresh the combined + per-source
+        VU meters. Runs continuously (from self.monitor_timer, started once
+        in __init__) regardless of whether we're recording -- that's what
+        makes the VU meters live as soon as a source is added, not just
+        while Record is held down. mixer.tick() itself only accumulates
+        into the saved recording while self.is_recording is True; here we
+        just always ask it to tick and always refresh the meters.
+        """
         try:
             self.mixer.tick()
-            preview = self.mixer.get_mixed_preview()
-            if preview:
-                self.waveform.update_buffer(preview)
-                arr = np.array(preview, dtype=np.float32)
-                rms = float(np.sqrt(np.mean(arr ** 2))) if arr.size else 0.0
-                self.vumeter.update_level(rms)
-            else:
-                self.waveform.update_buffer([])
-                self.vumeter.update_level(0)
 
             for name, row in self.source_rows.items():
                 row.vu.update_level(self.mixer.get_source_level(name))
 
             for name, err in self.mixer.get_source_errors().items():
-                self.log_text.append(f"⚠️ [{name}] {err}")
+                if self._reported_source_errors.get(name) != err:
+                    self.log_text.append(f"⚠️ [{name}] {err}")
+                    self._reported_source_errors[name] = err
+
+            # The big combined waveform/VU meter is shared with the
+            # loaded-file playback preview -- only drive it from live
+            # monitoring when a file isn't currently being previewed.
+            if self.loaded_samples is None:
+                preview = self.mixer.get_mixed_preview()
+                if preview:
+                    self.waveform.update_buffer(preview)
+                    arr = np.array(preview, dtype=np.float32)
+                    rms = float(np.sqrt(np.mean(arr ** 2))) if arr.size else 0.0
+                    self.vumeter.update_level(rms)
+                else:
+                    self.waveform.update_buffer([])
+                    self.vumeter.update_level(0)
         except Exception:
             pass
 
@@ -914,13 +929,9 @@ class MainWindow(QMainWindow):
 
         self.clear_loaded_audio_visualization()
         self.cancel_btn.setEnabled(False)
-
-        if not self.is_recording:
-            self.waveform.update_buffer([])
-            self.vumeter.update_level(0)
-            if self.update_timer:
-                self.update_timer.stop()
-                self.update_timer = None
+        # No manual blanking or timer bookkeeping needed here -- self.monitor_timer
+        # runs continuously and will resume driving the waveform/VU meters from
+        # live source monitoring now that loaded_samples is back to None.
 
     # ---------- Save / Open ----------
     def save_markdown(self):

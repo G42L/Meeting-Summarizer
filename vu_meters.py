@@ -608,6 +608,120 @@ class RetroLEDHorizontalVUMeter(QWidget):
         painter.drawText(4, 12, "dBFS")
         painter.drawText(rect.width() - 24, rect.height() - 5, "PK")
 
+class MiniLEDHorizontalVUMeter(QWidget):
+    """
+    Compact horizontal LED VU meter with no scale numbers, no "dBFS"/"PK"
+    text -- just the LED bar, a thin peak-hold line, and a small clip dot.
+    Same level/attack-release/peak-hold math as RetroLEDHorizontalVUMeter
+    (update_level is identical), just a stripped-down paintEvent for
+    contexts with very little horizontal room, like one row of the
+    per-source Audio Sources panel.
+    """
+    def __init__(self, parent=None, alpha=0.15):
+        super().__init__(parent)
+        self.setMinimumWidth(60)
+        self.setMinimumHeight(14)
+        self.setMaximumHeight(28)
+
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAutoFillBackground(False)
+        self.setStyleSheet("background: transparent;")
+
+        self.level = 0.0
+        self.display_level = 0.0
+        self.peak_hold = 0.0
+        self.hold_counter = 0
+        self.clip_counter = 0
+        self.db_min = -50.0
+        self.db_max = 6.0
+        self.smooth_level = 0.0
+        self.alpha = alpha
+
+    def update_level(self, rms):
+        """Identical math to RetroLEDHorizontalVUMeter.update_level -- only the drawing differs."""
+        if rms < 1e-10:
+            db = self.db_min
+        else:
+            db = 20.0 * np.log10(rms)
+            db = max(self.db_min, min(self.db_max, db))
+
+        level = (db - self.db_min) / (self.db_max - self.db_min)
+        level = max(0.0, min(1.0, level))
+
+        if level > self.display_level:
+            self.display_level = self.display_level * 0.30 + level * 0.70
+        else:
+            self.display_level = self.display_level * 0.95 + level * 0.05
+        self.level = self.display_level
+
+        self.smooth_level = self.smooth_level * (1.0 - self.alpha) + self.level * self.alpha
+        self.smooth_level = max(0.0, min(1.0, self.smooth_level))
+        self.level = self.smooth_level
+
+        if self.level > self.peak_hold:
+            self.peak_hold = self.level
+            self.hold_counter = 40
+        elif self.hold_counter > 0:
+            self.hold_counter -= 1
+        else:
+            self.peak_hold *= 0.995
+
+        if db > -0.5:
+            self.clip_counter = 60
+        elif self.clip_counter > 0:
+            self.clip_counter -= 1
+
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = self.rect()
+
+        # Background
+        grad = QLinearGradient(0, rect.top(), 0, rect.bottom())
+        grad.setColorAt(0.0, QColor(45, 45, 45))
+        grad.setColorAt(1.0, QColor(18, 18, 18))
+        painter.setPen(QPen(QColor(70, 70, 70), 1))
+        painter.setBrush(QBrush(grad))
+        painter.drawRoundedRect(rect, 4, 4)
+
+        # The LED bar fills almost the whole widget -- a small margin plus
+        # room for the clip dot, no space reserved for scale text at all.
+        clip_dot_size = 8
+        meter_rect = QRect(3, 3, rect.width() - clip_dot_size - 8, rect.height() - 6)
+
+        segments = min(30, max(8, meter_rect.width() // 6))
+        gap = 1
+        seg_width = max(2, int((meter_rect.width() - (segments - 1) * gap) / segments))
+        lit_segments = int(self.level * segments)
+
+        for i in range(segments):
+            x = meter_rect.left() + i * (seg_width + gap)
+            position = i / segments
+            if position < 0.75:
+                on_color = QColor(0, 220, 0)
+            elif position < 0.92:
+                on_color = QColor(255, 220, 0)
+            else:
+                on_color = QColor(255, 60, 60)
+
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(on_color if i < lit_segments else QColor(35, 35, 35))
+            painter.drawRoundedRect(x, meter_rect.top(), seg_width, meter_rect.height(), 1, 1)
+
+        # Peak-hold marker -- a thin line, no accompanying text.
+        if self.peak_hold > 0.01:
+            peak_x = int(meter_rect.left() + self.peak_hold * meter_rect.width())
+            painter.setPen(QPen(QColor(255, 255, 255), 1))
+            painter.drawLine(peak_x, meter_rect.top(), peak_x, meter_rect.bottom())
+
+        # Small clip indicator -- a dot, not a "PK" label.
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(255, 0, 0) if self.clip_counter > 0 else QColor(60, 0, 0))
+        dot_y = rect.height() // 2 - clip_dot_size // 2
+        painter.drawEllipse(rect.width() - clip_dot_size - 3, dot_y, clip_dot_size, clip_dot_size)
+
 class ModernVUMeter(QWidget):
     """
     Horizontal LED-style VU meter with individual segments.
