@@ -52,12 +52,12 @@ Table of Contents
 The app is split into focused modules instead of one large file:
 
 ```text
-main.py              MainWindow, all UI wiring, application entry point
-├── audio_engine.py    Multi-source capture + live mixing (AudioSource, AudioMixerEngine)
-├── vu_meters.py        Waveform display + 14 VU-meter visual styles
-├── whisper_engine.py   Model catalogue, download, offline-first transcription
-├── llm_backend.py      Ollama / vLLM / LM Studio / llama.cpp detection + summarization
-└── pipeline.py          Job queue: Job, ProcessingWorker, QueueWorker
+main.py                   MainWindow, all UI wiring, application entry point
+├── audio_engine.py       Multi-source capture + live mixing (AudioSource, AudioMixerEngine)
+├── vu_meters.py          Waveform display + 14 VU-meter visual styles
+├── whisper_engine.py     Model catalogue, download, offline-first transcription
+├── llm_backend.py        Ollama / vLLM / LM Studio / llama.cpp detection + summarization
+└── pipeline.py           Job queue: Job, ProcessingWorker, QueueWorker
 ```
 
 Each file can be read (and modified) on its own — `audio_engine.py` doesn't know anything about Qt widgets, `vu_meters.py` doesn't know anything about audio capture, etc.
@@ -68,12 +68,12 @@ Each file can be read (and modified) on its own — `audio_engine.py` doesn't kn
 Every source you add (microphone, system-audio loopback, a second mic…) runs its own capture stream, gets downmixed to mono and resampled to 16 kHz, then all active, unmuted sources are summed together roughly 30 times a second into one continuous recording:
 
 ```text
- 🎤 Microphone     ──┐
-                     │   gain    mute?     resample
- 💻 Teams (loopback) ─┼─▶ [ x1.3 ]─▶[skip if muted]─▶[→16kHz]─┐
-                     │                                        │
- 🎤 USB Mic 2        ──┘                                        ├─▶  SUM  ─▶ clip[-1,1] ─▶ meeting.wav
-                                                                │            │
+ 🎤 Microphone      ──┐
+                      │     gain         mute?       resample
+ 💻 Teams (loopback) ─┼─▶ [ x1.3 ]─▶[skip if muted]─▶[→16kHz]──┐
+                      │                                        │
+ 🎤 USB Mic 2       ──┘                                        ├─▶  SUM  ─▶ clip[-1,1] ─▶ meeting.wav
+                                                               │                 │
                                                      per-source VU meters    combined waveform + VU meter
 ```
 
@@ -81,13 +81,13 @@ Sources are mixed independently of how fast each device's driver delivers audio 
 
 ## The Audio Sources panel
 ```text
-┌─ Audio Sources ───────────────────────────────────────────────────────┐
+┌─ Audio Sources ───────────────────────────────────────────────────────────┐
 │ Add source: [ 💻 Stereo Mix (loopback)            ▾ ]  [➕ Add] [Refresh] │
-│             (already-added devices appear greyed out and unselectable) │
-│                                                                          │
-│  🎤 Realtek Mic        Gain [───●───────] 100%   ☐ Mute   ▁▂▃▅▂▁   [✕] │
-│  💻 Teams (loopback)   Gain [──────●────] 130%   ☐ Mute   ▂▃▇▆▃▂   [✕] │
-└──────────────────────────────────────────────────────────────────────┘
+│             (already-added devices appear greyed out and unselectable)    │
+│                                                                           │
+│  🎤 Realtek Mic        Gain [───●───────] 100%   ☐ Mute   █ █ ░░   [✕]    │
+│  💻 Teams (loopback)   Gain [──────●────] 130%   ☐ Mute   █ ░░░░   [✕]    │
+└───────────────────────────────────────────────────────────────────────────┘
 ```
 * **Add source** lists every microphone plus every detected system-audio device; picking one and clicking **Add** starts it immediately as its own row.
 * Each row has an independent **gain** slider (0–200%), a **mute** checkbox, a small live VU meter, and a remove (✕) button.
@@ -114,11 +114,20 @@ This is the one part of the app that genuinely differs by operating system, beca
 # Installation
 1. Clone or Download the Source
     ```bash
-    git clone https://github.com/yourusername/meeting-transcriber.git
-    cd meeting-transcriber
+    git clone https://github.com/glegigan/Transcriber-Summary.git
+    cd Transcriber-Summary
     ```
 
 2. Install Python Dependencies
+
+    Install a python virtual environment (optional)
+
+    ```bash
+    python3 -m venv venv
+    source venv/bin/activate
+    ```
+
+    Install dependencies (mandatory)
 
     ```bash
     pip install -r requirements.txt
@@ -138,7 +147,7 @@ This is the one part of the app that genuinely differs by operating system, beca
     ```
     This is the one capture path `miniaudio`'s Python bindings don't expose (see the [system-audio table](#capturing-system-audio-teams-etc-per-os) above). It's optional — the app runs fine without it if you only ever record your microphone, or if you're on macOS/Linux.
 
-3. Whisper Backend
+4. Whisper Backend
 You have two options – the GUI will let you choose which one to use.
 
 **Option A: faster‑whisper (Python)**
@@ -237,10 +246,11 @@ python main.py
 5. Control Buttons:
     * 🎤 Record – start/stop recording.
     * 📂 Load Audio – load an existing audio file for processing.
+    * ❌ Cancel - cancel job currently being processed
     * 🗑️ Clear Log – clear the log/summary display.
 6. Progress Bar – shows overall job progress.
-7. Log / Summary Output – displays logs (including backend-detection diagnostics) and streams the generated summary.
-8. Save / Open – save the Markdown summary or open the output folder.
+7. 📄 Log / Summary Output – displays logs (including backend-detection diagnostics) and streams the generated summary.
+8. 💾 Save / Open – save the Markdown summary or open the output folder.
 
 # Recording
 1. In **Audio Sources**, pick a device from the dropdown and click **➕ Add** — repeat for every source you want in the mix (e.g. your microphone, then a loopback/system-audio device for Teams).
