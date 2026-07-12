@@ -13,7 +13,7 @@ A beautiful native Linux desktop client for Ollama.
 ![License](https://img.shields.io/github/license/glegigan/Transcriber-Summary)
 ![Stars](https://img.shields.io/github/stars/glegigan/Transcriber-Summary)
 ![Release](https://img.shields.io/github/v/release/glegigan/Transcriber-Summary)
-![Qt6](https://img.shields.io/badge/Qt-6-green)
+![Qt5](https://img.shields.io/badge/Qt-5-green)
 ![Linux](https://img.shields.io/badge/Linux-supported-blue)
 ![Windows](https://img.shields.io/badge/Windows-supported-blue)
 ![Mac](https://img.shields.io/badge/Mac-supported-blue)
