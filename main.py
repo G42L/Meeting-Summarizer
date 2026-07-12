@@ -17,6 +17,7 @@ This file is the GUI/orchestration layer only. The actual logic lives in:
 
 import sys
 import os
+import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -29,7 +30,7 @@ from PyQt5.QtWidgets import (
     QGroupBox, QFileDialog, QMessageBox, QCheckBox, QSizePolicy, QSlider
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer
-from PyQt5.QtGui import QIcon
+from PyQt5.QtGui import QIcon, QFont
 
 import audio_engine
 import vu_meters
@@ -129,7 +130,7 @@ class MainWindow(QMainWindow):
         self.queue_thread.started.connect(self.queue_worker.run)
         self.queue_thread.start()
 
-        self.queue_worker.log.connect(self.log_text.append)
+        self.queue_worker.log.connect(self.append_log)
         self.queue_worker.progress.connect(self.progress_bar.setValue)
         self.queue_worker.summary_chunk.connect(self.append_summary)
         self.queue_worker.job_finished.connect(self.on_job_finished)
@@ -293,9 +294,21 @@ class MainWindow(QMainWindow):
 
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setFontFamily("monospace")
+        self.log_text.setFont(QFont("monospace"))
         layout.addWidget(QLabel("Log / Summary Output:"))
         layout.addWidget(self.log_text)
+
+        # Console is rendered as Markdown (Qt's built-in CommonMark-ish parser,
+        # available since Qt 5.14). We keep the raw Markdown source ourselves
+        # in _console_md and re-render the whole document on a short debounce
+        # timer rather than on every streamed token, since QTextEdit has no
+        # incremental-append API for Markdown -- see append_log/append_summary.
+        self._console_md = ""
+        self._console_last_was_summary = False
+        self._console_render_timer = QTimer(self)
+        self._console_render_timer.setSingleShot(True)
+        self._console_render_timer.setInterval(200)
+        self._console_render_timer.timeout.connect(self._flush_console)
 
         save_layout = QHBoxLayout()
         self.save_md_btn = QPushButton("💾 Save Markdown As...")
@@ -335,7 +348,7 @@ class MainWindow(QMainWindow):
         try:
             devices = audio_engine.list_all_sources()
         except Exception as e:
-            self.log_text.append(f"Error listing audio devices: {e}")
+            self.append_log(f"Error listing audio devices: {e}")
             return
 
         model = self.source_picker_combo.model()
@@ -407,7 +420,7 @@ class MainWindow(QMainWindow):
         self.source_rows[name] = row
         self.sources_layout.addWidget(row)
         self.no_sources_label.setVisible(False)
-        self.log_text.append(f"➕ Added source: {name}")
+        self.append_log(f"➕ Added source: {name}")
 
         self.refresh_source_picker()  # grey out the one we just added
 
@@ -423,7 +436,7 @@ class MainWindow(QMainWindow):
             row.setParent(None)
             row.deleteLater()
         self.no_sources_label.setVisible(not self.source_rows)
-        self.log_text.append(f"➖ Removed source: {name}")
+        self.append_log(f"➖ Removed source: {name}")
         self.refresh_source_picker()  # re-enable it in the picker
 
     # ------------------------------------------------------------------
@@ -448,7 +461,7 @@ class MainWindow(QMainWindow):
             "border: 1px solid #cc0000;"
         )
         self.progress_bar.setValue(0)
-        self.log_text.append("🎤 Recording... (press Stop to finish)")
+        self.append_log("🎤 Recording... (press Stop to finish)")
 
         if self.playback_timer and self.playback_timer.isActive():
             self.playback_timer.stop()
@@ -461,14 +474,14 @@ class MainWindow(QMainWindow):
         try:
             errors = self.mixer.start()
         except Exception as e:
-            self.log_text.append(f"❌ Recording error: {e}")
+            self.append_log(f"❌ Recording error: {e}")
             self.is_recording = False
             self.dev_group.setEnabled(True)
             self.reset_ui()
             return
 
         for err in errors:
-            self.log_text.append(f"⚠️ Source failed to start: {err}")
+            self.append_log(f"⚠️ Source failed to start: {err}")
         # No per-recording timer to start here -- self.monitor_timer already
         # runs continuously and mixer.tick() now accumulates automatically
         # because self.mixer.start() just flipped is_running to True.
@@ -479,7 +492,7 @@ class MainWindow(QMainWindow):
         self.dev_group.setEnabled(True)
 
         if mixed_audio.size == 0:
-            self.log_text.append("⏹ No audio recorded.")
+            self.append_log("⏹ No audio recorded.")
             self.load_btn.setEnabled(True)
             self.update_config_lock()
             self.reset_ui()
@@ -497,7 +510,7 @@ class MainWindow(QMainWindow):
         output_dir.mkdir(exist_ok=True)
         audio_file = output_dir / "meeting.wav"
         sf.write(str(audio_file), mixed_audio, audio_engine.ENGINE_SAMPLE_RATE)
-        self.log_text.append(f"✅ Recorded ({len(self.mixer.sources)} source(s) mixed) to {audio_file}")
+        self.append_log(f"✅ Recorded ({len(self.mixer.sources)} source(s) mixed) to {audio_file}")
 
         self._add_job_from_audio(str(audio_file), output_dir=output_dir)
 
@@ -527,7 +540,7 @@ class MainWindow(QMainWindow):
 
             for name, err in self.mixer.get_source_errors().items():
                 if self._reported_source_errors.get(name) != err:
-                    self.log_text.append(f"⚠️ [{name}] {err}")
+                    self.append_log(f"⚠️ [{name}] {err}")
                     self._reported_source_errors[name] = err
 
             # The big combined waveform/VU meter is shared with the
@@ -570,7 +583,7 @@ class MainWindow(QMainWindow):
             self.playback_timer.timeout.connect(self.update_playback_visualisation)
             self.playback_timer.start(33)
         except Exception as e:
-            self.log_text.append(f"Could not load audio for visualisation: {e}")
+            self.append_log(f"Could not load audio for visualisation: {e}")
             self.loaded_samples = None
 
         self._add_job_from_audio(file_path)
@@ -692,7 +705,7 @@ class MainWindow(QMainWindow):
 
     def refresh_backends(self):
         self.backend_combo.clear()
-        self.backends = llm_backend.detect_backends(log=self.log_text.append)
+        self.backends = llm_backend.detect_backends(log=self.append_log)
         if not self.backends:
             self.backend_combo.addItem("No backend detected")
             self.model_combo.clear()
@@ -755,7 +768,7 @@ class MainWindow(QMainWindow):
             text = self.whisper_combo.currentText()
             model_name = text.split()[0] if text else "unknown"
             info = {"name": model_name, "downloaded": False, "disk_size": "?", "mem_usage": "?"}
-            self.log_text.append(f"⚠️ Could not retrieve model info; using fallback for '{model_name}'.")
+            self.append_log(f"⚠️ Could not retrieve model info; using fallback for '{model_name}'.")
 
         if info.get("downloaded", False):
             return
@@ -802,7 +815,7 @@ class MainWindow(QMainWindow):
         self.download_worker.moveToThread(self.download_thread)
 
         self.download_thread.started.connect(self.download_worker.run)
-        self.download_worker.log.connect(self.log_text.append)
+        self.download_worker.log.connect(self.append_log)
         self.download_worker.finished.connect(self.on_download_finished)
         self.download_worker.finished.connect(self.download_thread.quit)
         self.download_worker.finished.connect(self.download_worker.deleteLater)
@@ -823,14 +836,14 @@ class MainWindow(QMainWindow):
         self.whisper_combo.blockSignals(True)
         try:
             if success:
-                self.log_text.append(f"✅ Model '{model_name}' is now available.")
+                self.append_log(f"✅ Model '{model_name}' is now available.")
                 for i in range(self.whisper_combo.count()):
                     info = self.whisper_combo.itemData(i, Qt.UserRole)
                     if info and info["name"] == model_name:
                         self.whisper_combo.setCurrentIndex(i)
                         break
             else:
-                self.log_text.append(f"❌ Download of '{model_name}' failed. Please download manually.")
+                self.append_log(f"❌ Download of '{model_name}' failed. Please download manually.")
                 for i in range(self.whisper_combo.count()):
                     info = self.whisper_combo.itemData(i, Qt.UserRole)
                     if info and info["downloaded"]:
@@ -870,7 +883,7 @@ class MainWindow(QMainWindow):
         self.queue_worker.add_job(job)
         self.job_count += 1
         self.update_config_lock()
-        self.log_text.append(f"📥 Job #{job.id} added to queue.")
+        self.append_log(f"📥 Job #{job.id} added to queue.")
         self.cancel_btn.setEnabled(True)
 
     def on_job_finished(self, md_path):
@@ -886,33 +899,60 @@ class MainWindow(QMainWindow):
         self.clear_loaded_audio_visualization()
 
         self.last_md_path = md_path
-        self.log_text.append(f"\n✅ Markdown saved to: {md_path}")
-        self.log_text.append(f"📁 All files in: {os.path.dirname(md_path)}")
+        self.append_log(f"✅ Markdown saved to: {md_path}")
+        self.append_log(f"📁 All files in: {os.path.dirname(md_path)}")
         self.progress_bar.setValue(100)
 
         self.cancel_btn.setEnabled(False)
 
     def on_job_started(self, job_id):
-        self.log_text.append(f"🔄 Processing job #{job_id}...")
+        self.append_log(f"🔄 Processing job #{job_id}...")
         self.cancel_btn.setEnabled(True)
 
     def cancel_current_job(self):
         if self.queue_worker:
             self.queue_worker.stop_current_job()
-            self.log_text.append("⏹ Cancelling current job...")
+            self.append_log("⏹ Cancelling current job...")
             self.cancel_btn.setEnabled(False)
 
     def on_error(self, msg):
-        self.log_text.append(f"❌ Error: {msg}")
+        self.append_log(f"❌ Error: {msg}")
         self.job_count -= 1
         self.update_config_lock()
         self.reset_ui()
 
+    def append_log(self, text):
+        """Add a diagnostic log line to the console. Markdown-special characters
+        are escaped so paths/messages (e.g. 'a_b*c') don't get misread as
+        emphasis -- unlike append_summary, this text isn't meant to be Markdown."""
+        escaped = re.sub(r'([\\`*_\[\]#])', r'\\\1', text)
+        if self._console_md:
+            self._console_md += "\n\n"
+        self._console_md += escaped
+        self._console_last_was_summary = False
+        self._schedule_console_render()
+
     def append_summary(self, chunk):
-        self.log_text.insertPlainText(chunk)
-        cursor = self.log_text.textCursor()
-        cursor.movePosition(cursor.End)
-        self.log_text.setTextCursor(cursor)
+        """Append a streamed LLM token/chunk. Chunks are concatenated raw
+        (no escaping, no separators) since together they form one Markdown
+        document the LLM is generating -- only the *start* of a summary run
+        gets a blank-line separator from whatever preceded it."""
+        if self._console_md and not self._console_last_was_summary:
+            self._console_md += "\n\n"
+        self._console_md += chunk
+        self._console_last_was_summary = True
+        self._schedule_console_render()
+
+    def _schedule_console_render(self):
+        if not self._console_render_timer.isActive():
+            self._console_render_timer.start()
+
+    def _flush_console(self):
+        scrollbar = self.log_text.verticalScrollBar()
+        was_at_bottom = scrollbar.value() >= scrollbar.maximum() - 4
+        self.log_text.setMarkdown(self._console_md)
+        if was_at_bottom:
+            scrollbar.setValue(scrollbar.maximum())
 
     def reset_ui(self):
         self.record_btn.setEnabled(True)
@@ -944,7 +984,7 @@ class MainWindow(QMainWindow):
         if save_path:
             import shutil
             shutil.copy2(self.last_md_path, save_path)
-            self.log_text.append(f"📁 Saved copy to: {save_path}")
+            self.append_log(f"📁 Saved copy to: {save_path}")
 
     def open_folder(self):
         if self.last_md_path and os.path.exists(self.last_md_path):
@@ -960,6 +1000,9 @@ class MainWindow(QMainWindow):
             subprocess.Popen(["xdg-open", folder])
 
     def clear_log(self):
+        self._console_render_timer.stop()
+        self._console_md = ""
+        self._console_last_was_summary = False
         self.log_text.clear()
 
     # ---------- Lock configuration ----------
@@ -974,6 +1017,7 @@ class MainWindow(QMainWindow):
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setApplicationName("Transcriber")
     app.setWindowIcon(QIcon("icon.svg"))
     win = MainWindow()
     win.show()

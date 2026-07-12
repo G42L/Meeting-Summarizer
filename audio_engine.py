@@ -395,29 +395,39 @@ class AudioSource:
 
 class AudioMixerEngine:
     """
-    Owns a set of named AudioSource objects, starts/stops them together,
-    and periodically mixes whatever they've each produced into one mono
-    stream at ENGINE_SAMPLE_RATE.
+    Owns a set of named AudioSource objects and periodically mixes
+    whatever they've each produced into one mono stream at
+    ENGINE_SAMPLE_RATE.
+
+    Two independent things happen here, and it's worth keeping them
+    straight:
+      * MONITORING -- each source starts capturing the moment it's added
+        via add_source(), and stays capturing until removed. This is what
+        drives the live VU meters, whether or not you've pressed Record.
+      * RECORDING -- start()/stop() (the Record button) don't open or
+        close any stream; they just toggle whether tick() also appends
+        the live mix to a permanent buffer that stop() hands back to you.
 
     Usage:
         engine = AudioMixerEngine()
         engine.add_source("Microphone", device_id=mic["device_id"],
                            samplerate=mic["samplerate"], channels=mic["channels"])
-        engine.add_source("Teams (loopback)", device_id=loop["device_id"],
-                           samplerate=loop["samplerate"], channels=loop["channels"],
-                           is_loopback=True, wasapi_loopback=loop["wasapi_loopback"])
-        engine.start()
+        # VU meters can show activity right away:
+        engine.tick()  # call continuously, e.g. every 33ms, regardless of recording state
+
+        engine.start()   # Record pressed -- tick() now also accumulates
         ...
-        engine.tick()          # call this on a QTimer, e.g. every 33ms
+        audio = engine.stop()  # Stop pressed -- returns the full mixed np.ndarray;
+                                # sources keep running so monitoring continues
         ...
-        audio = engine.stop()  # returns the full mixed np.ndarray
+        engine.shutdown()  # app closing -- actually releases every device
     """
 
     def __init__(self):
         self.sources = {}                     # name -> AudioSource
-        self._mixed_chunks = []               # accumulated across the whole recording
+        self._mixed_chunks = []               # accumulated only while recording
         self._mixed_preview = deque(maxlen=ENGINE_SAMPLE_RATE)
-        self._running = False
+        self._running = False                 # True only while actually recording
 
     # ---------------- source management ----------------
 
@@ -430,9 +440,13 @@ class AudioMixerEngine:
             channels=channels, is_loopback=is_loopback,
             wasapi_loopback=wasapi_loopback, gain=gain,
         )
+        # Start capturing immediately, independent of whether we're
+        # recording, so the VU meters show activity as soon as a source
+        # is added. Raises straight through if the device can't be
+        # opened -- deliberately not registered in self.sources in that
+        # case, so a failed add doesn't leave a broken half-added source.
+        source.start()
         self.sources[name] = source
-        if self._running:
-            source.start()
         return source
 
     def remove_source(self, name):
@@ -448,15 +462,18 @@ class AudioMixerEngine:
         if name in self.sources:
             self.sources[name].muted = muted
 
-    # ---------------- recording lifecycle ----------------
+    # ---------------- recording lifecycle (Record / Stop button) ----------------
 
     def start(self):
+        """Begin accumulating the live mix into a saved recording."""
         if not self.sources:
             raise RuntimeError("Add at least one source before starting the mixer.")
         self._mixed_chunks = []
         self._mixed_preview.clear()
         errors = []
         for source in self.sources.values():
+            if source.is_active:
+                continue  # already running as part of live monitoring
             try:
                 source.start()
             except Exception as e:
@@ -465,10 +482,19 @@ class AudioMixerEngine:
         return errors  # sources that failed to open; caller decides how to warn
 
     def stop(self):
-        for source in self.sources.values():
-            source.stop()
+        """Stop accumulating into the saved recording. Sources keep running
+        afterward -- monitoring continues seamlessly between recordings."""
         self._running = False
         return self.get_mixed_audio()
+
+    def shutdown(self):
+        """Stop everything, including live monitoring. Call this when the
+        whole app is closing to actually release every audio device --
+        stop() deliberately does NOT do this, so a Record/Stop cycle
+        doesn't kill the VU meters."""
+        self._running = False
+        for source in self.sources.values():
+            source.stop()
 
     @property
     def is_running(self):
@@ -477,15 +503,16 @@ class AudioMixerEngine:
     def tick(self):
         """
         Pull whatever each active source has produced since the last
-        tick, pad the shorter ones with zeros so they line up, sum them,
-        and append the result to the running mix. Call this regularly
-        (e.g. from a 33ms QTimer) while recording.
+        tick, pad the shorter ones with zeros so they line up, and sum
+        them. Call this continuously (e.g. from a 33ms QTimer) regardless
+        of whether you're recording -- it's what drives the live preview
+        and per-source VU meters. The mixed chunk only gets appended to
+        the permanent saved recording while self._running is True (i.e.
+        between start() and stop()); outside that it's still mixed for
+        display purposes but discarded afterward.
 
         Returns the RMS of the newly mixed chunk (0.0 if nothing new).
         """
-        if not self._running:
-            return 0.0
-
         chunks = []
         for source in self.sources.values():
             if not source.is_active:
@@ -510,8 +537,9 @@ class AudioMixerEngine:
             mixed += c
         mixed = np.clip(mixed, -1.0, 1.0)
 
-        self._mixed_chunks.append(mixed)
         self._mixed_preview.extend(mixed.tolist())
+        if self._running:
+            self._mixed_chunks.append(mixed)
         return float(np.sqrt(np.mean(np.square(mixed)))) if mixed.size else 0.0
 
     # ---------------- reading results ----------------
