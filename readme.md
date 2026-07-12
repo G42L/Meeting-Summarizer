@@ -1,4 +1,25 @@
-# Meeting Transcriber
+<p align="center">
+  <img src="icon.svg" width="128">
+</p>
+
+<h1 align="center">Meeting Transcriber</h1>
+
+<p align="center">
+A beautiful native Linux desktop client for Ollama.
+</p>
+
+<p align="center">
+
+![License](https://img.shields.io/github/license/glegigan/Transcriber-Summary)
+![Stars](https://img.shields.io/github/stars/glegigan/Transcriber-Summary)
+![Release](https://img.shields.io/github/v/release/glegigan/Transcriber-Summary)
+![Qt6](https://img.shields.io/badge/Qt-6-green)
+![Linux](https://img.shields.io/badge/Linux-supported-blue)
+![Windows](https://img.shields.io/badge/Windows-supported-blue)
+![Mac](https://img.shields.io/badge/Mac-supported-blue)
+
+</p>
+
 A cross‑platform desktop application built with PyQt5 that records **one or more audio sources at once** (microphone, MS Teams / system audio, a second mic, …), mixes them live into a single stream, transcribes it with Whisper, and generates a structured summary using a local large language model (LLM). All files are saved in timestamped folders under `./transcripts/`.
 
 | Light Theme | Dark Theme |
@@ -324,6 +345,13 @@ The summary.md includes:
 For further help, please open an issue on the project repository.
 
 # License
-This project is released under the MIT License. See the LICENSE file for details.
+
+LinOllama is free software licensed under the GNU General Public License v3.0 (GPL-3.0-only).
+
+You are free to use, study, modify, and redistribute this software under the terms of the GNU GPL version 3.
+
+Any distributed modified version or derivative work of LinOllama must also be licensed under GPLv3 and the corresponding source code must be made available.
+
+See the LICENSE file for the complete license text.
 
 *Enjoy transcribing and summarizing your meetings! 🚀*
