@@ -371,11 +371,23 @@ class AudioSource:
 
         resampled = _resample_linear(mono, self.native_samplerate, ENGINE_SAMPLE_RATE)
 
+        # Do the expensive per-sample float boxing (.tolist(), needed
+        # because _preview is a maxlen deque of scalars) and the gain/clip
+        # math *before* taking the lock, not while holding it. This runs on
+        # the realtime audio callback thread, and the GUI thread wants the
+        # same lock ~30x/sec via AudioMixerEngine.tick() -> pull_available();
+        # keeping the critical section down to just the deque mutations
+        # minimizes how long either side can block the other.
+        preview_samples = resampled.tolist()
+        chunk = None
+        if not self.muted:
+            chunk = resampled * self.gain if self.gain != 1.0 else resampled
+            chunk = np.clip(chunk, -1.0, 1.0)
+
         with self._lock:
-            self._preview.extend(resampled.tolist())
-            if not self.muted:
-                chunk = resampled * self.gain if self.gain != 1.0 else resampled
-                self._buffer.append(np.clip(chunk, -1.0, 1.0))
+            self._preview.extend(preview_samples)
+            if chunk is not None:
+                self._buffer.append(chunk)
 
     # ---------------- consumption (called from the mixer, GUI thread) ----------------
 

@@ -19,7 +19,6 @@ import sys
 import os
 import re
 import subprocess
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -167,6 +166,7 @@ class MainWindow(QMainWindow):
         self.source_rows = {}      # name -> SourceRow
         self.is_recording = False
         self._reported_source_errors = {}  # name -> last-logged error, avoids spamming the log every tick
+        self._last_visualization_error = None  # dedup for update_visualization's own errors, same reason
 
         # ---- Loaded-file playback state (unchanged from before) ----
         self.loaded_samples = None
@@ -607,13 +607,42 @@ class MainWindow(QMainWindow):
             self.playback_timer = None
         self.loaded_samples = None
 
-        base_dir = Path.cwd() / "transcripts"
-        base_dir.mkdir(exist_ok=True)
-        folder_name = datetime.now().strftime("%Y-%m-%d %H.%M.%S")
-        output_dir = base_dir / folder_name
-        output_dir.mkdir(exist_ok=True)
+        output_dir = pipeline.new_output_dir()
         audio_file = output_dir / "meeting.wav"
-        sf.write(str(audio_file), mixed_audio, audio_engine.ENGINE_SAMPLE_RATE)
+        try:
+            sf.write(str(audio_file), mixed_audio, audio_engine.ENGINE_SAMPLE_RATE)
+        except Exception as e:
+            # The audio just captured may be an hour of irreplaceable meeting
+            # recording -- don't just drop it if the default location can't
+            # be written to (disk full, permissions, ...). Offer a fallback
+            # save location instead of losing it silently.
+            self.append_log(f"❌ Failed to save recording to {audio_file}: {e}")
+            QMessageBox.warning(
+                self, "Save Failed",
+                f"Could not save the recording to:\n{audio_file}\n\n{e}\n\n"
+                "Choose a different location to save it now, or Cancel to discard it."
+            )
+            fallback_path, _ = QFileDialog.getSaveFileName(
+                self, "Save Recording As", str(audio_file), "WAV files (*.wav)"
+            )
+            if not fallback_path:
+                self.append_log("❌ Recording discarded -- no save location chosen.")
+                self.load_btn.setEnabled(True)
+                self.update_config_lock()
+                self.reset_ui()
+                return
+            try:
+                sf.write(fallback_path, mixed_audio, audio_engine.ENGINE_SAMPLE_RATE)
+            except Exception as e2:
+                self.append_log(f"❌ Failed to save recording: {e2}")
+                QMessageBox.critical(self, "Save Failed", f"Could not save the recording:\n{e2}\n\nThe recorded audio has been lost.")
+                self.load_btn.setEnabled(True)
+                self.update_config_lock()
+                self.reset_ui()
+                return
+            audio_file = Path(fallback_path)
+            output_dir = audio_file.parent
+
         self.append_log(f"✅ Recorded ({len(self.mixer.sources)} source(s) mixed) to {audio_file}")
 
         self._add_job_from_audio(str(audio_file), output_dir=output_dir)
@@ -660,8 +689,18 @@ class MainWindow(QMainWindow):
                 else:
                     self.waveform.update_buffer([])
                     self.vumeter.update_level(0)
-        except Exception:
-            pass
+            self._last_visualization_error = None
+        except Exception as e:
+            # This tick runs 30x/sec, so a persistent bug here would spam
+            # the log 30 times a second if logged unconditionally -- only
+            # log when the error is new (or changes), same dedup pattern as
+            # self._reported_source_errors above. Silently swallowing every
+            # exception (the old behaviour) meant a real regression here
+            # would just freeze the VU meters with zero diagnostic trail.
+            err_str = f"{type(e).__name__}: {e}"
+            if err_str != self._last_visualization_error:
+                self._last_visualization_error = err_str
+                self.append_log(f"⚠️ Visualization update error: {err_str}")
 
     def update_system_monitor(self):
         cpu_ram = sysmon.sample_cpu_ram()
