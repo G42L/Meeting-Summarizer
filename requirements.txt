@@ -4,9 +4,16 @@ numpy>=1.24
 miniaudio>=1.71    # self-contained audio capture -- no system PortAudio/ALSA-dev needed
 soundfile>=0.12
 requests>=2.31
+psutil>=5.9        # CPU/RAM stats for the System monitor panel
 
 # Whisper (Python backend) — optional if you only use whisper-cli
 faster-whisper>=1.0
+
+# GPU/VRAM stats for the System monitor panel — optional, NVIDIA only.
+# sysmon.py degrades gracefully (GPU just won't show live NVIDIA stats) if
+# this isn't installed or there's no NVIDIA driver; AMD/Intel GPUs on Linux
+# are still detected without this, via sysfs. See sysmon.py's docstring.
+nvidia-ml-py>=12.0
 
 # ---------------------------------------------------------------
 # Platform-specific system-audio (Teams/loopback) capture:

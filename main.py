@@ -37,6 +37,7 @@ import vu_meters
 import whisper_engine
 import llm_backend
 import pipeline
+import sysmon
 
 
 # ----------------------------------------------------------------------
@@ -94,6 +95,61 @@ class SourceRow(QWidget):
         self.gain_changed.emit(self.source_name, percent / 100.0)
 
 
+# ----------------------------------------------------------------------
+# One row in the "System" panel per GPU detected by sysmon.list_gpus():
+# name, load bar, VRAM bar. Bars go disabled/"N/A" when a stat isn't
+# available for that GPU/platform -- see sysmon.py for which backends
+# expose what.
+# ----------------------------------------------------------------------
+class GpuRow(QWidget):
+    def __init__(self, gpu, parent=None):
+        super().__init__(parent)
+        self.gpu = gpu
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 2, 4, 2)
+
+        # Two even columns: GPU name on the left, Load+VRAM grouped on the
+        # right -- equal stretch factors keep them at half the row each
+        # regardless of how long the GPU's name is.
+        label = QLabel(f"GPU ({gpu['vendor']}): {gpu['name']}")
+        layout.addWidget(label, stretch=1)
+
+        stats_layout = QHBoxLayout()
+        stats_layout.addWidget(QLabel("Load:"))
+        self.load_bar = QProgressBar()
+        self.load_bar.setRange(0, 100)
+        stats_layout.addWidget(self.load_bar, stretch=1)
+
+        stats_layout.addWidget(QLabel("VRAM:"))
+        self.vram_bar = QProgressBar()
+        self.vram_bar.setRange(0, 100)
+        stats_layout.addWidget(self.vram_bar, stretch=1)
+
+        layout.addLayout(stats_layout, stretch=1)
+
+    def update_stats(self, stats):
+        if stats["load_percent"] is None:
+            self.load_bar.setEnabled(False)
+            self.load_bar.setFormat("N/A")
+            self.load_bar.setValue(0)
+        else:
+            self.load_bar.setEnabled(True)
+            self.load_bar.setFormat("%p%")
+            self.load_bar.setValue(int(stats["load_percent"]))
+
+        vram_total = stats["vram_total_mb"]
+        vram_used = stats["vram_used_mb"]
+        if not vram_total or vram_used is None:
+            self.vram_bar.setEnabled(False)
+            self.vram_bar.setFormat("N/A")
+            self.vram_bar.setValue(0)
+        else:
+            self.vram_bar.setEnabled(True)
+            self.vram_bar.setValue(int(100 * vram_used / vram_total))
+            self.vram_bar.setFormat(f"{vram_used / 1024:.1f}/{vram_total / 1024:.1f} GB")
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -149,6 +205,13 @@ class MainWindow(QMainWindow):
         self.monitor_timer = QTimer()
         self.monitor_timer.timeout.connect(self.update_visualization)
         self.monitor_timer.start(33)
+
+        # CPU/RAM/GPU stats change slowly compared to audio -- 1s is plenty
+        # responsive and avoids re-querying NVML/sysfs at 30fps for nothing.
+        self.sysmon_timer = QTimer()
+        self.sysmon_timer.timeout.connect(self.update_system_monitor)
+        self.sysmon_timer.start(1000)
+        self.update_system_monitor()  # populate immediately instead of waiting 1s
 
     # ------------------------------------------------------------------
     # UI construction
@@ -262,6 +325,36 @@ class MainWindow(QMainWindow):
         vis_group.setLayout(vis_main_layout)
         layout.addWidget(vis_group)
 
+        # ----- System resource monitor (CPU/RAM/GPU/VRAM) -----
+        sys_group = QGroupBox("System")
+        sys_layout = QVBoxLayout()
+
+        cpu_ram_row = QHBoxLayout()
+        cpu_ram_row.addWidget(QLabel("CPU:"))
+        self.cpu_bar = QProgressBar()
+        self.cpu_bar.setRange(0, 100)
+        cpu_ram_row.addWidget(self.cpu_bar)
+        cpu_ram_row.addWidget(QLabel("RAM:"))
+        self.ram_bar = QProgressBar()
+        self.ram_bar.setRange(0, 100)
+        cpu_ram_row.addWidget(self.ram_bar)
+        sys_layout.addLayout(cpu_ram_row)
+
+        # GPUs are detected once at startup (sysmon.list_gpus()) since
+        # enumerating them isn't free and the set of GPUs doesn't change
+        # while the app runs; only their load/VRAM are re-sampled per tick.
+        self.gpus = sysmon.list_gpus()
+        self.gpu_rows = []
+        for gpu in self.gpus:
+            row = GpuRow(gpu)
+            sys_layout.addWidget(row)
+            self.gpu_rows.append(row)
+        if not self.gpus:
+            sys_layout.addWidget(QLabel("No GPU detected"))
+
+        sys_group.setLayout(sys_layout)
+        layout.addWidget(sys_group)
+
         # ----- Record/Stop button + progress -----
         control_layout = QHBoxLayout()
         self.record_btn = QPushButton("🎤 Record")
@@ -329,6 +422,7 @@ class MainWindow(QMainWindow):
             self.queue_worker.stop()
             self.queue_thread.quit()
             self.queue_thread.wait()
+        sysmon.shutdown()
         event.accept()
 
     # ------------------------------------------------------------------
@@ -558,6 +652,16 @@ class MainWindow(QMainWindow):
                     self.vumeter.update_level(0)
         except Exception:
             pass
+
+    def update_system_monitor(self):
+        cpu_ram = sysmon.sample_cpu_ram()
+        self.cpu_bar.setValue(int(cpu_ram["cpu_percent"]))
+        self.cpu_bar.setFormat(f"{cpu_ram['cpu_percent']:.0f}%")
+        self.ram_bar.setValue(int(cpu_ram["ram_percent"]))
+        self.ram_bar.setFormat(f"{cpu_ram['ram_used_gb']:.1f}/{cpu_ram['ram_total_gb']:.1f} GB")
+
+        for gpu, row in zip(self.gpus, self.gpu_rows):
+            row.update_stats(sysmon.sample_gpu(gpu))
 
     # ------------------------------------------------------------------
     # File loading + playback visualisation (unchanged behaviour)
