@@ -11,12 +11,21 @@ GPU support is best-effort and platform-dependent:
   - Intel / other (Linux): detected via the PCI vendor ID in sysfs, but most
     kernels don't expose busy%/VRAM for integrated GPUs there, so those
     fields come back as None ("N/A" in the UI) -- the GPU is still listed.
-  - macOS, or AMD/Intel on Windows: not detected. There's no vendor-neutral,
+  - macOS (Apple Silicon and Intel Macs): name/core count only, via
+    `system_profiler SPDisplaysDataType -json` (no extra dependency, ships
+    with macOS). Load%/VRAM always come back as None here -- Apple Silicon
+    has no separate VRAM (unified memory, already reflected in the RAM
+    stat), and live GPU load is only exposed by `powermetrics`, which
+    requires sudo. Prompting a background 1s timer for a root password is a
+    bad trade, so we deliberately don't attempt it.
+  - AMD/Intel on Windows: not detected. There's no vendor-neutral,
     pip-installable API for those combinations.
 """
 import sys
 import glob
 import os
+import json
+import subprocess
 
 import psutil
 
@@ -32,6 +41,14 @@ _PCI_VENDOR_NAMES = {
     "0x1002": "AMD",
     "0x8086": "Intel",
 }
+
+
+def _guess_vendor_from_name(name):
+    lowered = name.lower()
+    for vendor in ("Apple", "NVIDIA", "AMD", "Intel"):
+        if vendor.lower() in lowered:
+            return vendor
+    return "Unknown"
 
 
 def sample_cpu_ram():
@@ -87,6 +104,25 @@ def list_gpus():
                 "vendor": vendor, "name": name,
                 "backend": "sysfs", "handle": device_dir,
             })
+
+    if sys.platform == "darwin":
+        try:
+            result = subprocess.run(
+                ["system_profiler", "SPDisplaysDataType", "-json"],
+                capture_output=True, text=True, timeout=5, check=True,
+            )
+            data = json.loads(result.stdout)
+            for entry in data.get("SPDisplaysDataType", []):
+                name = entry.get("sppci_model") or entry.get("_name") or "GPU"
+                cores = entry.get("sppci_cores")
+                if cores:
+                    name = f"{name} ({cores}-core)"
+                gpus.append({
+                    "vendor": _guess_vendor_from_name(name), "name": name,
+                    "backend": "none", "handle": None,
+                })
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError):
+            pass
 
     return gpus
 

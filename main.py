@@ -119,35 +119,38 @@ class GpuRow(QWidget):
         stats_layout.addWidget(QLabel("Load:"))
         self.load_bar = QProgressBar()
         self.load_bar.setRange(0, 100)
+        self.load_bar.setFormat("%p%")
         stats_layout.addWidget(self.load_bar, stretch=1)
 
         stats_layout.addWidget(QLabel("VRAM:"))
         self.vram_bar = QProgressBar()
         self.vram_bar.setRange(0, 100)
+        self.vram_bar.setFormat("%p%")
         stats_layout.addWidget(self.vram_bar, stretch=1)
+        self.vram_value_label = QLabel("N/A")
+        self.vram_value_label.setMinimumWidth(90)
+        stats_layout.addWidget(self.vram_value_label)
 
         layout.addLayout(stats_layout, stretch=1)
 
     def update_stats(self, stats):
         if stats["load_percent"] is None:
             self.load_bar.setEnabled(False)
-            self.load_bar.setFormat("N/A")
             self.load_bar.setValue(0)
         else:
             self.load_bar.setEnabled(True)
-            self.load_bar.setFormat("%p%")
             self.load_bar.setValue(int(stats["load_percent"]))
 
         vram_total = stats["vram_total_mb"]
         vram_used = stats["vram_used_mb"]
         if not vram_total or vram_used is None:
             self.vram_bar.setEnabled(False)
-            self.vram_bar.setFormat("N/A")
             self.vram_bar.setValue(0)
+            self.vram_value_label.setText("N/A")
         else:
             self.vram_bar.setEnabled(True)
             self.vram_bar.setValue(int(100 * vram_used / vram_total))
-            self.vram_bar.setFormat(f"{vram_used / 1024:.1f}/{vram_total / 1024:.1f} GB")
+            self.vram_value_label.setText(f"{vram_used / 1024:.1f}/{vram_total / 1024:.1f} GB")
 
 
 class MainWindow(QMainWindow):
@@ -333,11 +336,18 @@ class MainWindow(QMainWindow):
         cpu_ram_row.addWidget(QLabel("CPU:"))
         self.cpu_bar = QProgressBar()
         self.cpu_bar.setRange(0, 100)
+        self.cpu_bar.setFormat("%p%")
         cpu_ram_row.addWidget(self.cpu_bar)
+
         cpu_ram_row.addWidget(QLabel("RAM:"))
         self.ram_bar = QProgressBar()
         self.ram_bar.setRange(0, 100)
+        self.ram_bar.setFormat("%p%")
         cpu_ram_row.addWidget(self.ram_bar)
+        self.ram_value_label = QLabel("0.0/0.0 GB")
+        self.ram_value_label.setMinimumWidth(90)
+        cpu_ram_row.addWidget(self.ram_value_label)
+
         sys_layout.addLayout(cpu_ram_row)
 
         # GPUs are detected once at startup (sysmon.list_gpus()) since
@@ -656,9 +666,8 @@ class MainWindow(QMainWindow):
     def update_system_monitor(self):
         cpu_ram = sysmon.sample_cpu_ram()
         self.cpu_bar.setValue(int(cpu_ram["cpu_percent"]))
-        self.cpu_bar.setFormat(f"{cpu_ram['cpu_percent']:.0f}%")
         self.ram_bar.setValue(int(cpu_ram["ram_percent"]))
-        self.ram_bar.setFormat(f"{cpu_ram['ram_used_gb']:.1f}/{cpu_ram['ram_total_gb']:.1f} GB")
+        self.ram_value_label.setText(f"{cpu_ram['ram_used_gb']:.1f}/{cpu_ram['ram_total_gb']:.1f} GB")
 
         for gpu, row in zip(self.gpus, self.gpu_rows):
             row.update_stats(sysmon.sample_gpu(gpu))
