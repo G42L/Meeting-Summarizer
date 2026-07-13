@@ -44,6 +44,8 @@ from . import pipeline
 from . import sysmon
 
 ICONS_DIR = os.path.join(os.path.dirname(__file__), "icons", "ui")
+# Qt Style Sheet url() needs forward slashes even on Windows.
+_ICONS_DIR_CSS = ICONS_DIR.replace(os.sep, "/")
 
 
 def themed_icon(name, color, size=18):
@@ -82,6 +84,7 @@ QPushButton {
     border: 1px solid palette(mid);
     border-radius: 8px;
     padding: 6px 14px;
+    min-height: 20px;
 }
 QPushButton:hover {
     background-color: palette(light);
@@ -129,9 +132,39 @@ QComboBox, QLineEdit, QPlainTextEdit {
     border: 1px solid palette(mid);
     border-radius: 6px;
     padding: 4px 6px;
+    min-height: 20px;
 }
 QComboBox:focus, QLineEdit:focus, QPlainTextEdit:focus {
     border: 1px solid palette(highlight);
+}
+
+/* Without this, the drop-down button keeps the native style's square
+   corners even though QComboBox itself is rounded above -- the box looks
+   rounded but the arrow sits in a squared-off patch cut out of its right
+   edge (seen on both macOS and Linux). Rounding only the two corners that
+   sit flush with the outer border, and leaving the arrow glyph itself to
+   the platform style, keeps the fix minimal and still theme-native. */
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 22px;
+    border-left: 1px solid palette(mid);
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+}
+QComboBox::drop-down:hover {
+    background-color: palette(light);
+}
+QComboBox::down-arrow {
+    /* Styling ::drop-down at all makes Qt stop drawing its native arrow
+       glyph inside it (verified directly -- it renders as a blank box
+       otherwise), so this needs an explicit image. QSS can't tint url()
+       images per-palette like themed_icon() does, so the color is baked
+       into the SVG itself as a neutral gray already verified >=3:1
+       contrast against both light and dark (see LOG_ICON_COLORS). */
+    image: url(__ICONS_DIR__/chevron-down.svg);
+    width: 10px;
+    height: 10px;
 }
 
 QListWidget {
@@ -142,7 +175,7 @@ QListWidget::item:selected {
     background-color: palette(highlight);
     color: palette(highlightedtext);
 }
-"""
+""".replace("__ICONS_DIR__", _ICONS_DIR_CSS)
 
 # Maps each status emoji used in append_log() calls (across main.py and the
 # log(...) callables in pipeline.py/llm_backend.py/whisper_engine.py/
