@@ -262,3 +262,221 @@ def test_prompt_style_combo_lives_inside_llm_group(main_window):
         ancestors.append(widget)
         widget = widget.parentWidget()
     assert win.llm_group in ancestors
+
+
+# ---------------------------------------------------------------------
+# Icons/widgets refreshing on OS theme (palette) change while running.
+#
+# Two independent bugs lived here: our baked icon *bitmaps* (themed_icon()/
+# MainWindow._icon()) never got re-rendered on a theme flip, since nothing
+# listened for QEvent.PaletteChange; and, less obviously, BASE_STYLESHEET's
+# palette(...) references turned out NOT to re-evaluate live despite
+# looking dynamic -- Qt's QSS engine caches the resolved color per widget
+# and only recomputes it on an explicit repolish (verified directly via
+# screenshots: QPushButton/QComboBox/QLineEdit kept the *old* theme's
+# colors indefinitely after a live palette change, while natively-drawn
+# widgets like QGroupBox's fill updated fine on their own). These tests
+# call changeEvent() directly (after actually changing the widget's
+# palette) rather than relying on the platform to deliver a real
+# theme-change event, since that's the untestable, OS-specific part --
+# what's being tested here is our own response to the event, not Qt's
+# delivery of it.
+# ---------------------------------------------------------------------
+
+def _first_opaque_pixel_color(icon, size=18):
+    """Fully-opaque (alpha==255) pixel specifically, not just alpha>0 --
+    anti-aliased edge pixels are partially blended with the (transparent)
+    background and don't reflect the tint color exactly."""
+    image = icon.pixmap(size, size).toImage()
+    for y in range(image.height()):
+        for x in range(image.width()):
+            color = image.pixelColor(x, y)
+            if color.alpha() == 255:
+                return color
+    return None
+
+
+def test_icon_refreshes_on_palette_change(main_window):
+    from PyQt5.QtCore import QEvent
+    from PyQt5.QtGui import QColor, QPalette
+
+    win = main_window
+    old_icon = win.load_btn.icon()
+
+    new_color = QColor(10, 200, 10)  # distinct from whatever the default was
+    new_palette = QPalette(win.palette())
+    new_palette.setColor(QPalette.WindowText, new_color)
+    win.setPalette(new_palette)
+    win.changeEvent(QEvent(QEvent.PaletteChange))
+
+    new_icon = win.load_btn.icon()
+    assert new_icon.cacheKey() != old_icon.cacheKey()
+    sampled = _first_opaque_pixel_color(new_icon)
+    assert sampled is not None
+    assert (sampled.red(), sampled.green(), sampled.blue()) == (10, 200, 10)
+
+
+def test_record_btn_icon_survives_palette_change_while_recording(main_window):
+    from PyQt5.QtCore import QEvent
+    from PyQt5.QtGui import QColor, QPalette
+
+    win = main_window
+    win._record_icon_name = "stop-circle"  # simulate the mid-recording state
+    win.record_btn.setIcon(win._icon("stop-circle"))
+
+    new_palette = QPalette(win.palette())
+    new_palette.setColor(QPalette.WindowText, QColor(5, 5, 5))
+    win.setPalette(new_palette)
+    win.changeEvent(QEvent(QEvent.PaletteChange))
+
+    assert win._record_icon_name == "stop-circle"
+    expected_image = win._icon("stop-circle").pixmap(18, 18).toImage()
+    actual_image = win.record_btn.icon().pixmap(18, 18).toImage()
+    assert actual_image == expected_image
+
+
+def test_stylesheet_button_color_updates_on_palette_change(main_window):
+    """Regression test for the QSS-caching bug: a QPushButton's
+    `background-color: palette(button)` rule must actually repaint with
+    the new color after a live theme flip, not just the icon on top of
+    it. Without MainWindow._repolish_widget_tree(), this stayed stuck on
+    whatever color was resolved the first time the stylesheet was
+    applied."""
+    from PyQt5.QtCore import QEvent
+    from PyQt5.QtGui import QColor, QPalette
+    from PyQt5.QtWidgets import QApplication
+
+    win = main_window
+    win.show()
+    app = QApplication.instance()
+    app.processEvents()
+    original_palette = QPalette(app.palette())
+    try:
+        # QSS's palette(...) functions resolve against the QApplication's
+        # palette, not the individual widget's -- matches what
+        # apply_linux_color_scheme() actually does in production
+        # (app.setPalette(...)), unlike the icon-refresh tests above which
+        # only need the widget's own palette.
+        new_palette = QPalette(app.palette())
+        new_palette.setColor(QPalette.Button, QColor(1, 222, 3))
+        new_palette.setColor(QPalette.ButtonText, QColor(0, 0, 0))
+        app.setPalette(new_palette)
+        win.changeEvent(QEvent(QEvent.PaletteChange))
+        app.processEvents()
+
+        # A few pixels in from the left edge, away from the rounded corner
+        # clip and the 1px border, so this samples the button's actual QSS
+        # fill -- which should now reflect the new palette's Button color
+        # if the QSS repolish actually ran.
+        image = win.clear_log_btn.grab().toImage()
+        fill = image.pixelColor(10, image.height() // 2)
+        assert (fill.red(), fill.green(), fill.blue()) == (1, 222, 3)
+    finally:
+        app.setPalette(original_palette)
+        win.changeEvent(QEvent(QEvent.PaletteChange))
+
+
+def test_removed_source_row_refresher_pruned_without_breaking_others(main_window):
+    from PyQt5 import sip
+    from PyQt5.QtCore import QEvent
+    from PyQt5.QtGui import QColor, QPalette
+
+    win = main_window
+    row_a = main.SourceRow("a", "a", icon=win._icon("mic"))
+    row_b = main.SourceRow("b", "b", icon=win._icon("mic"))
+    win._track_icon(lambda label=row_a.icon_label: label.setPixmap(win._icon("mic").pixmap(16, 16)))
+    win._track_icon(row_a.remove_btn.refresh_normal_icon)
+    win._track_icon(lambda label=row_b.icon_label: label.setPixmap(win._icon("mic").pixmap(16, 16)))
+    win._track_icon(row_b.remove_btn.refresh_normal_icon)
+
+    sip.delete(row_a)  # simulates the widget having actually been destroyed,
+                        # like a removed SourceRow -- not just gone out of scope
+
+    new_palette = QPalette(win.palette())
+    new_palette.setColor(QPalette.WindowText, QColor(1, 2, 3))
+    win.setPalette(new_palette)
+    win.changeEvent(QEvent(QEvent.PaletteChange))  # must not raise
+
+    assert not row_b.icon_label.pixmap().isNull()
+    assert not row_b.remove_btn.icon().isNull()
+
+
+# ---------------------------------------------------------------------
+# apply_linux_color_scheme. This sandbox turned out to genuinely have a
+# working xdg-desktop-portal reporting "prefer dark" (an initial
+# `busctl --user list | grep portal` check missed it, likely because the
+# portal is D-Bus-activatable rather than a persistently listed service --
+# a raw QDBusInterface.call confirmed the real reply), so both the real
+# success path and the fallback paths (D-Bus unreachable, non-Linux) are
+# actually verifiable here, not just the fallback as originally assumed
+# while planning this fix.
+# ---------------------------------------------------------------------
+
+def _spy_on_set_palette(app, monkeypatch):
+    """
+    QApplication is a single global instance shared by the whole test
+    session, so comparing whole QPalette objects before/after (rather
+    than spying on the call itself) is fragile -- Qt's resolve-mask
+    bookkeeping can differ between an untouched palette and one that was
+    explicitly re-set to identical colors, and other tests in this file
+    also touch the same global app. Spying on setPalette directly is a
+    more direct, order-independent way to assert "this code path never
+    tried to change the palette at all".
+    """
+    calls = []
+    monkeypatch.setattr(app, "setPalette", lambda *a, **k: calls.append(a))
+    return calls
+
+
+def test_apply_linux_color_scheme_noop_when_dbus_not_connected(monkeypatch):
+    from PyQt5.QtDBus import QDBusConnection
+    from PyQt5.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    monkeypatch.setattr(main.sys, "platform", "linux")
+    calls = _spy_on_set_palette(app, monkeypatch)
+
+    class FakeBus:
+        def isConnected(self):
+            return False
+
+    monkeypatch.setattr(QDBusConnection, "sessionBus", staticmethod(lambda: FakeBus()))
+
+    main.apply_linux_color_scheme(app)  # must not raise
+
+    assert calls == []
+
+
+def test_apply_linux_color_scheme_is_noop_on_non_linux(monkeypatch):
+    from PyQt5.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    monkeypatch.setattr(main.sys, "platform", "darwin")
+    calls = _spy_on_set_palette(app, monkeypatch)
+
+    main.apply_linux_color_scheme(app)
+
+    assert calls == []
+
+
+def test_apply_linux_color_scheme_detects_dark_in_this_real_sandbox():
+    """
+    Not a simulated/mocked case -- this sandbox's session bus genuinely
+    has a working xdg-desktop-portal reporting "prefer dark" (verified
+    directly with a raw QDBusInterface.call: org.freedesktop.appearance /
+    color-scheme reads back as 1). That makes the *real* success path
+    exercisable here, not just the fallback -- so this asserts the dark
+    palette this function applies actually took effect, not just that
+    the function ran without raising.
+    """
+    from PyQt5.QtGui import QPalette
+    from PyQt5.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    original_palette = QPalette(app.palette())
+    try:
+        main.apply_linux_color_scheme(app)
+        window_text = app.palette().color(QPalette.WindowText)
+        assert (window_text.red(), window_text.green(), window_text.blue()) == (230, 230, 230)
+    finally:
+        app.setPalette(original_palette)

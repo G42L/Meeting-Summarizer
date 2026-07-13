@@ -32,7 +32,7 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox, QSystemTrayIcon, QMenu, QShortcut, QFrame,
     QGraphicsDropShadowEffect
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QSettings, QPropertyAnimation, QEasingCurve, QPoint, QSize, QUrl
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QSettings, QPropertyAnimation, QEasingCurve, QPoint, QSize, QUrl, QEvent
 from PyQt5.QtGui import QIcon, QFont, QKeySequence, QCursor, QPixmap, QPainter, QColor, QPalette, QTextDocument
 from PyQt5.QtSvg import QSvgRenderer
 
@@ -383,10 +383,13 @@ class SourceRow(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 2, 4, 2)
 
+        # Exposed as attributes (not local vars) so MainWindow can register
+        # them with _track_icon() for the OS theme-change refresh.
+        self.icon_label = None
         if icon is not None:
-            icon_label = QLabel()
-            icon_label.setPixmap(icon.pixmap(16, 16))
-            layout.addWidget(icon_label)
+            self.icon_label = QLabel()
+            self.icon_label.setPixmap(icon.pixmap(16, 16))
+            layout.addWidget(self.icon_label)
 
         label = QLabel(display_label)
         label.setMinimumWidth(220)
@@ -415,10 +418,10 @@ class SourceRow(QWidget):
         self.vu.setMaximumWidth(140)
         layout.addWidget(self.vu)
 
-        remove_btn = HoverColorIconButton("cross-circle", hover_color="#d93025")
-        remove_btn.setToolTip("Remove this source")
-        remove_btn.clicked.connect(lambda: self.remove_clicked.emit(self.source_name))
-        layout.addWidget(remove_btn)
+        self.remove_btn = HoverColorIconButton("cross-circle", hover_color="#d93025")
+        self.remove_btn.setToolTip("Remove this source")
+        self.remove_btn.clicked.connect(lambda: self.remove_clicked.emit(self.source_name))
+        layout.addWidget(self.remove_btn)
 
     def _on_gain_changed(self, percent):
         self.gain_value_label.setText(f"{percent}%")
@@ -658,6 +661,8 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(960, 995)
 
         self._icon_cache = {}
+        self._icon_refreshers = []   # zero-arg callables re-applying a palette-tinted icon
+        self._record_icon_name = "mic"
 
         # ---- Multi-source recording state ----
         self.mixer = audio_engine.AudioMixerEngine()
@@ -748,9 +753,11 @@ class MainWindow(QMainWindow):
         picker_row.addWidget(self.source_picker_combo, stretch=1)
         add_source_btn = QPushButton(self._icon("plus"), "Add")
         add_source_btn.clicked.connect(self.add_selected_source)
+        self._track_icon(lambda b=add_source_btn: b.setIcon(self._icon("plus")))
         picker_row.addWidget(add_source_btn)
         refresh_dev_btn = QPushButton(self._icon("refresh-cw"), "Refresh")
         refresh_dev_btn.clicked.connect(self.refresh_source_picker)
+        self._track_icon(lambda b=refresh_dev_btn: b.setIcon(self._icon("refresh-cw")))
         picker_row.addWidget(refresh_dev_btn)
         dev_layout.addLayout(picker_row)
 
@@ -781,6 +788,7 @@ class MainWindow(QMainWindow):
         whisper_layout.addWidget(self.use_cli_check)
         refresh_whisper_btn = QPushButton(self._icon("refresh-cw"), "Refresh")
         refresh_whisper_btn.clicked.connect(self.refresh_whisper_models)
+        self._track_icon(lambda b=refresh_whisper_btn: b.setIcon(self._icon("refresh-cw")))
         whisper_layout.addWidget(refresh_whisper_btn)
         whisper_group_layout.addLayout(whisper_layout)
 
@@ -790,6 +798,7 @@ class MainWindow(QMainWindow):
         options_layout = QHBoxLayout()
         self.review_transcript_check = QCheckBox("Review transcript before summarizing")
         self.review_transcript_check.setIcon(self._icon("edit-3"))
+        self._track_icon(lambda: self.review_transcript_check.setIcon(self._icon("edit-3")))
         self.review_transcript_check.setToolTip(
             "Pause after transcription so you can read/edit the text before it's sent to the LLM"
         )
@@ -797,6 +806,7 @@ class MainWindow(QMainWindow):
 
         self.diarization_check = QCheckBox("Label speakers (diarization)")
         self.diarization_check.setIcon(self._icon("users"))
+        self._track_icon(lambda: self.diarization_check.setIcon(self._icon("users")))
         self.diarization_check.setToolTip(
             "Requires the faster-whisper backend (not whisper-cli), pyannote.audio installed, "
             "and a Hugging Face token with the gated 'pyannote/speaker-diarization-3.1' model's "
@@ -835,6 +845,7 @@ class MainWindow(QMainWindow):
         llm_layout.addWidget(self.model_combo)
         refresh_backend_btn = QPushButton(self._icon("refresh-cw"), "Refresh")
         refresh_backend_btn.clicked.connect(self.refresh_backends)
+        self._track_icon(lambda b=refresh_backend_btn: b.setIcon(self._icon("refresh-cw")))
         llm_layout.addWidget(refresh_backend_btn)
         llm_group_layout.addLayout(llm_layout)
 
@@ -938,10 +949,15 @@ class MainWindow(QMainWindow):
         self.record_btn = QPushButton(self._icon("mic"), "Record")
         self.record_btn.clicked.connect(self.toggle_recording)
         self._set_button_class(self.record_btn, "primary")
+        # record_btn's icon alternates mic/stop-circle with recording state
+        # (see start_recording/reset_ui), not just theme -- refresh
+        # whichever name is current rather than hardcoding "mic" here.
+        self._track_icon(lambda: self.record_btn.setIcon(self._icon(self._record_icon_name)))
         control_layout.addWidget(self.record_btn)
 
         self.load_btn = QPushButton(self._icon("upload"), "Load Audio")
         self.load_btn.clicked.connect(self.load_audio_file)
+        self._track_icon(lambda: self.load_btn.setIcon(self._icon("upload")))
         control_layout.addWidget(self.load_btn)
 
         self.progress_bar = QProgressBar()
@@ -952,10 +968,12 @@ class MainWindow(QMainWindow):
         self.cancel_btn = QPushButton(self._icon("x"), "Cancel")
         self.cancel_btn.clicked.connect(self.cancel_current_job)
         self.cancel_btn.setEnabled(False)
+        self._track_icon(lambda: self.cancel_btn.setIcon(self._icon("x")))
         control_layout.addWidget(self.cancel_btn)
 
         self.clear_log_btn = QPushButton(self._icon("trash-2"), "Clear Log")
         self.clear_log_btn.clicked.connect(self.clear_log)
+        self._track_icon(lambda: self.clear_log_btn.setIcon(self._icon("trash-2")))
         control_layout.addWidget(self.clear_log_btn)
 
         layout.addLayout(control_layout)
@@ -988,12 +1006,16 @@ class MainWindow(QMainWindow):
         self.history_sidebar = HistorySidebar(central)
         self.history_sidebar.open_output_folder_btn.setIcon(self._icon("folder"))
         self.history_sidebar.open_output_folder_btn.clicked.connect(self.open_folder)
+        self._track_icon(lambda: self.history_sidebar.open_output_folder_btn.setIcon(self._icon("folder")))
         self.history_sidebar.refresh_btn.setIcon(self._icon("refresh-cw"))
         self.history_sidebar.refresh_btn.clicked.connect(self.refresh_history)
+        self._track_icon(lambda: self.history_sidebar.refresh_btn.setIcon(self._icon("refresh-cw")))
         self.history_sidebar.open_folder_btn.setIcon(self._icon("folder"))
         self.history_sidebar.open_folder_btn.clicked.connect(self.open_selected_history_folder)
+        self._track_icon(lambda: self.history_sidebar.open_folder_btn.setIcon(self._icon("folder")))
         self.history_sidebar.list_widget.itemDoubleClicked.connect(self.open_history_summary)
         self.history_sidebar.handle_label.setPixmap(self._icon("clock").pixmap(16, 16))
+        self._track_icon(lambda: self.history_sidebar.handle_label.setPixmap(self._icon("clock").pixmap(16, 16)))
         self.history_sidebar.raise_()
 
     # ------------------------------------------------------------------
@@ -1075,6 +1097,46 @@ class MainWindow(QMainWindow):
         button.setProperty("cls", cls)
         button.style().unpolish(button)
         button.style().polish(button)
+
+    def _track_icon(self, apply_fn):
+        """
+        Registers a zero-arg callable that re-applies a palette-tinted
+        icon, so changeEvent() can redo it when the OS theme flips while
+        the app is running -- our baked icon bitmaps (themed_icon()/
+        self._icon()) don't repaint themselves on a palette change;
+        nothing was listening for the theme change at all before this.
+        """
+        self._icon_refreshers.append(apply_fn)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.PaletteChange:
+            self._icon_cache.clear()
+            # A refresher can point at a widget that no longer exists
+            # (e.g. a removed SourceRow) -- that's a real case, not
+            # speculative, so drop it instead of letting it break every
+            # other icon's refresh for the rest of the session.
+            for refresh in list(self._icon_refreshers):
+                try:
+                    refresh()
+                except RuntimeError:
+                    self._icon_refreshers.remove(refresh)
+            # BASE_STYLESHEET's palette(...) references look dynamic, but
+            # Qt's QSS engine actually caches the resolved colors per
+            # widget and only recomputes them on an explicit repolish --
+            # verified directly: without this, buttons/combos/line edits
+            # kept rendering with the *old* theme's colors indefinitely
+            # after a live palette change, while native-drawn widgets
+            # (QGroupBox fill, QLabel text) updated fine on their own.
+            self._repolish_widget_tree()
+
+    def _repolish_widget_tree(self):
+        for widget in [self] + self.findChildren(QWidget):
+            try:
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+            except RuntimeError:
+                pass
 
     def _register_log_icons(self):
         """
@@ -1191,11 +1253,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Could not add source", str(e))
             return
 
-        icon = self._icon("monitor" if dev["is_loopback"] else "mic")
-        row = SourceRow(name, name, icon=icon)
+        icon_name = "monitor" if dev["is_loopback"] else "mic"
+        row = SourceRow(name, name, icon=self._icon(icon_name))
         row.remove_clicked.connect(self.remove_source)
         row.gain_changed.connect(lambda n, g: self.mixer.set_gain(n, g))
         row.mute_changed.connect(lambda n, m, f: self.mixer.set_muted(n, m, f))
+        if row.icon_label is not None:
+            self._track_icon(lambda label=row.icon_label, n=icon_name: label.setPixmap(self._icon(n).pixmap(16, 16)))
+        self._track_icon(row.remove_btn.refresh_normal_icon)
         self.source_rows[name] = row
         self.sources_layout.addWidget(row)
         self.no_sources_label.setVisible(False)
@@ -1234,6 +1299,7 @@ class MainWindow(QMainWindow):
 
         self.load_btn.setEnabled(False)
         self.record_btn.setText("Stop")
+        self._record_icon_name = "stop-circle"
         self.record_btn.setIcon(self._icon("stop-circle"))
         self._set_button_class(self.record_btn, "danger")
         self.progress_bar.setValue(0)
@@ -1817,6 +1883,7 @@ class MainWindow(QMainWindow):
         self.record_btn.setEnabled(True)
         self.load_btn.setEnabled(True)
         self.record_btn.setText("Record")
+        self._record_icon_name = "mic"
         self.record_btn.setIcon(self._icon("mic"))
         self._set_button_class(self.record_btn, "primary")
 
@@ -1926,10 +1993,108 @@ class MainWindow(QMainWindow):
 
 
 # ----------------------------------------------------------------------
+def _dark_palette():
+    """Same color values already used (and visually verified via screenshots
+    throughout development) to simulate a dark OS theme for testing."""
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor(45, 45, 48))
+    palette.setColor(QPalette.WindowText, QColor(230, 230, 230))
+    palette.setColor(QPalette.Base, QColor(30, 30, 30))
+    palette.setColor(QPalette.AlternateBase, QColor(45, 45, 48))
+    palette.setColor(QPalette.Text, QColor(230, 230, 230))
+    palette.setColor(QPalette.Button, QColor(60, 60, 63))
+    palette.setColor(QPalette.ButtonText, QColor(230, 230, 230))
+    palette.setColor(QPalette.Highlight, QColor(80, 140, 220))
+    palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
+    palette.setColor(QPalette.Mid, QColor(90, 90, 95))
+    palette.setColor(QPalette.Light, QColor(75, 75, 80))
+    palette.setColor(QPalette.Dark, QColor(20, 20, 20))
+    palette.setColor(QPalette.Midlight, QColor(70, 70, 75))
+    return palette
+
+
+def apply_linux_color_scheme(app):
+    """
+    Qt5 has no built-in cross-desktop API for "what's the current OS
+    light/dark preference" (unlike Qt 6.5+'s QStyleHints.colorScheme()) --
+    it only reflects whatever a platform theme integration plugin (qt5ct,
+    qgnomeplatform, KDE's native integration, ...) tells it, and most
+    Linux setups don't have one configured, so Qt5 apps default to a
+    static light palette regardless of the OS setting. This queries the
+    standardized XDG Desktop Portal instead (org.freedesktop.portal.
+    Settings, supported by GNOME/KDE and, via xdg-desktop-portal-cosmic,
+    COSMIC too), which is desktop-environment-agnostic.
+
+    Every failure path here (no portal service running, D-Bus unavailable,
+    a malformed reply) leaves the app exactly as it behaves today -- a
+    silent no-op, the same "optional feature degrades gracefully"
+    convention already used for nvidia-ml-py/pyannote.audio elsewhere in
+    this app. Only that fallback path could actually be verified while
+    building this -- this sandbox has no xdg-desktop-portal service
+    running at all (confirmed via `busctl --user list`), so the success
+    path (an environment where the portal *is* running) needs confirming
+    on a real machine.
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        from PyQt5.QtDBus import QDBusConnection, QDBusInterface
+
+        bus = QDBusConnection.sessionBus()
+        if not bus.isConnected():
+            return
+        iface = QDBusInterface(
+            "org.freedesktop.portal.Desktop",
+            "/org/freedesktop/portal/desktop",
+            "org.freedesktop.portal.Settings",
+            bus,
+        )
+        if not iface.isValid():
+            return
+
+        def read_color_scheme():
+            reply = iface.call("Read", "org.freedesktop.appearance", "color-scheme")
+            args = reply.arguments()
+            if not args:
+                return None
+            value = args[0]
+            # Settings.Read wraps its reply in a variant, and the setting
+            # itself is stored as a variant too -- unwrap up to two layers.
+            for _ in range(2):
+                if hasattr(value, "variant"):
+                    value = value.variant()
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        if read_color_scheme() == 1:  # 1 == prefer dark, 2 == prefer light, 0 == no preference
+            app.setPalette(_dark_palette())
+
+        def on_setting_changed(namespace, key, value):
+            if namespace == "org.freedesktop.appearance" and key == "color-scheme":
+                scheme = read_color_scheme()
+                if scheme == 1:
+                    app.setPalette(_dark_palette())
+                elif scheme == 2:
+                    app.setPalette(app.style().standardPalette())
+
+        bus.connect(
+            "org.freedesktop.portal.Desktop",
+            "/org/freedesktop/portal/desktop",
+            "org.freedesktop.portal.Settings",
+            "SettingChanged",
+            on_setting_changed,
+        )
+    except Exception:
+        pass  # any failure here must never block the app from starting
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setApplicationName("Transcriber")
     app.setWindowIcon(QIcon("icon.svg"))
+    apply_linux_color_scheme(app)
     win = MainWindow()
     win.show()
     sys.exit(app.exec_())
