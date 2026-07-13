@@ -16,8 +16,8 @@ from collections import deque
 
 from PyQt5.QtCore import QObject, QThread, pyqtSignal
 
-import whisper_engine
-import llm_backend
+from . import whisper_engine
+from . import llm_backend
 
 
 class Job:

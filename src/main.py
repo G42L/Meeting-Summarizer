@@ -32,12 +32,12 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer
 from PyQt5.QtGui import QIcon, QFont
 
-import audio_engine
-import vu_meters
-import whisper_engine
-import llm_backend
-import pipeline
-import sysmon
+from . import audio_engine
+from . import vu_meters
+from . import whisper_engine
+from . import llm_backend
+from . import pipeline
+from . import sysmon
 
 
 # ----------------------------------------------------------------------
