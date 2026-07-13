@@ -1131,10 +1131,24 @@ class MainWindow(QMainWindow):
             self._repolish_widget_tree()
 
     def _repolish_widget_tree(self):
+        # Re-assigning the stylesheet string on the two widgets that actually
+        # own BASE_STYLESHEET (self and the central widget) forces Qt to
+        # fully rebuild its cached style-sheet render rules for every
+        # descendant, rather than relying solely on each widget's own
+        # unpolish()/polish() below -- reported necessary on macOS, where
+        # QPushButton is bridged through the native Cocoa style and kept
+        # showing the old theme's colors even after a per-widget repolish
+        # (Linux's Fusion-style rendering didn't need this extra step, but
+        # it's a harmless no-op there).
+        central = self.centralWidget()
+        for owner in (self, central):
+            if owner is not None:
+                owner.setStyleSheet(owner.styleSheet())
         for widget in [self] + self.findChildren(QWidget):
             try:
                 widget.style().unpolish(widget)
                 widget.style().polish(widget)
+                widget.update()
             except RuntimeError:
                 pass
 
