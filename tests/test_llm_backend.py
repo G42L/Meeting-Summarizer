@@ -140,6 +140,54 @@ def test_summarize_unknown_api_type_logs_and_returns_none():
     assert any("Unknown API type" in line for line in logs)
 
 
+def test_summarize_uses_default_prompt_template_when_none_given(monkeypatch):
+    captured = {}
+
+    def fake_summarize_ollama(prompt, backend_url, model, on_chunk, log, queue_worker=None):
+        captured["prompt"] = prompt
+        return "summary"
+
+    monkeypatch.setattr(llm_backend, "_summarize_ollama", fake_summarize_ollama)
+    llm_backend.summarize(
+        "the transcript", {"url": "http://x", "api_type": "ollama"}, "model",
+        on_chunk=lambda c: None, log=print,
+    )
+    assert captured["prompt"] == llm_backend.DEFAULT_PROMPT_TEMPLATE.replace("{transcript}", "the transcript")
+
+
+def test_summarize_uses_custom_prompt_template_when_given(monkeypatch):
+    captured = {}
+
+    def fake_summarize_ollama(prompt, backend_url, model, on_chunk, log, queue_worker=None):
+        captured["prompt"] = prompt
+        return "summary"
+
+    monkeypatch.setattr(llm_backend, "_summarize_ollama", fake_summarize_ollama)
+    llm_backend.summarize(
+        "the transcript", {"url": "http://x", "api_type": "ollama"}, "model",
+        on_chunk=lambda c: None, log=print,
+        prompt_template="Only action items:\n{transcript}",
+    )
+    assert captured["prompt"] == "Only action items:\nthe transcript"
+
+
+def test_summarize_custom_template_survives_stray_braces_in_transcript(monkeypatch):
+    """str.replace, not str.format -- a transcript containing literal { }
+    (e.g. someone reading out code) must not raise a KeyError/IndexError."""
+    captured = {}
+
+    def fake_summarize_ollama(prompt, backend_url, model, on_chunk, log, queue_worker=None):
+        captured["prompt"] = prompt
+        return "summary"
+
+    monkeypatch.setattr(llm_backend, "_summarize_ollama", fake_summarize_ollama)
+    llm_backend.summarize(
+        "so then I said {foo: bar}", {"url": "http://x", "api_type": "ollama"}, "model",
+        on_chunk=lambda c: None, log=print,
+    )
+    assert "{foo: bar}" in captured["prompt"]
+
+
 # ---------------------------------------------------------------------
 # _summarize_ollama
 # ---------------------------------------------------------------------
@@ -303,3 +351,88 @@ def test_save_markdown_writes_expected_content(tmp_path):
     assert "the transcript text" in content
     assert "llama3" in content
     assert "medium" in content
+
+
+# ---------------------------------------------------------------------
+# _extract_summary_snippet
+# ---------------------------------------------------------------------
+
+def test_extract_summary_snippet_pulls_text_between_summary_and_transcript():
+    md = (
+        "# Meeting Summary\n\n**Generated:** now\n\n"
+        "---\n\n## Summary\n\nKey decision: ship it.\n\n"
+        "---\n\n## Full Transcript\n\n```\nblah\n```\n"
+    )
+    assert llm_backend._extract_summary_snippet(md) == "Key decision: ship it."
+
+
+def test_extract_summary_snippet_truncates_long_summaries():
+    long_summary = "word " * 50
+    md = f"---\n\n## Summary\n\n{long_summary}\n\n---\n\n## Full Transcript\n\n"
+    snippet = llm_backend._extract_summary_snippet(md, max_len=20)
+    assert len(snippet) <= 21  # 20 chars + the ellipsis
+    assert snippet.endswith("…")
+
+
+def test_extract_summary_snippet_missing_marker_returns_empty_string():
+    assert llm_backend._extract_summary_snippet("no summary heading here") == ""
+
+
+def test_extract_summary_snippet_missing_trailing_dashes_still_works():
+    md = "## Summary\n\nJust a summary with no trailing separator."
+    assert llm_backend._extract_summary_snippet(md) == "Just a summary with no trailing separator."
+
+
+def test_extract_summary_snippet_strips_markdown_formatting():
+    """The summary is itself LLM-generated Markdown -- the list preview
+    should be plain text, not '### **Meeting Summary**' verbatim."""
+    md = "## Summary\n\n### **Overview:** The team `shipped` it.\n\n---\n\n## Full Transcript\n\n"
+    assert llm_backend._extract_summary_snippet(md) == "Overview: The team shipped it."
+
+
+# ---------------------------------------------------------------------
+# list_past_sessions
+# ---------------------------------------------------------------------
+
+def test_list_past_sessions_empty_dir_returns_empty_list(tmp_path):
+    assert llm_backend.list_past_sessions(tmp_path / "does-not-exist") == []
+
+
+def test_list_past_sessions_orders_newest_first(tmp_path):
+    for name in ["2026-01-01 10.00.00", "2026-01-03 10.00.00", "2026-01-02 10.00.00"]:
+        (tmp_path / name).mkdir()
+
+    sessions = llm_backend.list_past_sessions(tmp_path)
+    assert [s["timestamp"] for s in sessions] == [
+        "2026-01-03 10.00.00", "2026-01-02 10.00.00", "2026-01-01 10.00.00",
+    ]
+
+
+def test_list_past_sessions_reads_summary_snippet_when_present(tmp_path):
+    session_dir = tmp_path / "2026-01-01 10.00.00"
+    session_dir.mkdir()
+    (session_dir / "summary.md").write_text(
+        "---\n\n## Summary\n\nDiscussed the roadmap.\n\n---\n\n## Full Transcript\n\n", encoding="utf-8"
+    )
+
+    sessions = llm_backend.list_past_sessions(tmp_path)
+    assert len(sessions) == 1
+    assert sessions[0]["summary_snippet"] == "Discussed the roadmap."
+    assert sessions[0]["md_path"] == str(session_dir / "summary.md")
+
+
+def test_list_past_sessions_folder_without_summary_still_listed(tmp_path):
+    (tmp_path / "2026-01-01 10.00.00").mkdir()
+
+    sessions = llm_backend.list_past_sessions(tmp_path)
+    assert len(sessions) == 1
+    assert sessions[0]["summary_snippet"] == ""
+    assert sessions[0]["md_path"] is None
+
+
+def test_list_past_sessions_ignores_non_directory_entries(tmp_path):
+    (tmp_path / "2026-01-01 10.00.00").mkdir()
+    (tmp_path / "stray_file.txt").write_text("not a session", encoding="utf-8")
+
+    sessions = llm_backend.list_past_sessions(tmp_path)
+    assert len(sessions) == 1

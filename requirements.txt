@@ -15,6 +15,18 @@ faster-whisper>=1.0
 # are still detected without this, via sysfs. See sysmon.py's docstring.
 nvidia-ml-py>=12.0
 
+# Speaker diarization ("Label speakers" checkbox) — optional and heavy:
+# pulls in torch/torchaudio, and needs a free Hugging Face account with an
+# access token that has accepted the gated "pyannote/speaker-diarization-3.1"
+# model's terms at huggingface.co before it will load. diarization.py
+# degrades gracefully (is_available() reports it cleanly, jobs fall back to
+# the plain transcript) if this isn't installed or the token/model access
+# isn't set up. CPU-capable but much faster with a CUDA GPU -- torch
+# auto-detects and uses one if available, nothing extra to configure here.
+# Also faster-whisper-only: whisper-cli's plain-text output has no segment
+# timestamps to align speaker turns against.
+pyannote.audio>=3.1
+
 # ---------------------------------------------------------------
 # Platform-specific system-audio (Teams/loopback) capture:
 #

@@ -162,23 +162,19 @@ def download_whisper_model(model_name):
 # Transcription
 # ----------------------------------------------------------------------
 
-def transcribe_faster(audio_file, whisper_model, output_dir, log, queue_worker=None):
+def _load_faster_whisper_model(whisper_model, log):
     """
-    Transcribe with faster-whisper (pure Python, CPU int8). Emits progress
-    via `log(str)`. Returns the transcript string, or None on failure.
-    `queue_worker`, if given, is polled for `.stop_current` so a job can be
-    cancelled mid-transcription.
+    Shared by transcribe_faster/transcribe_faster_with_segments. Returns the
+    loaded WhisperModel, or None (with a log message already emitted) if
+    faster-whisper isn't installed or the model couldn't be loaded.
     """
-    try:
-        from faster_whisper import WhisperModel
-    except ImportError:
-        log("faster-whisper not installed. Falling back to whisper-cli.")
-        return transcribe_cli(audio_file, whisper_model, output_dir, log, queue_worker)
+    from faster_whisper import WhisperModel
 
     try:
         log(f"⏳ Loading Whisper model '{whisper_model}' from local cache (no network)...")
         model = WhisperModel(whisper_model, device="cpu", compute_type="int8", local_files_only=True)
         log("✅ Model loaded from local cache.")
+        return model
     except Exception:
         # Not cached yet -- this is the one-time case where a network call to
         # the Hugging Face Hub is unavoidable. After this, local_files_only=True
@@ -189,9 +185,26 @@ def transcribe_faster(audio_file, whisper_model, output_dir, log, queue_worker=N
             log("   (This may take several minutes for large models like large-v3)")
             model = WhisperModel(whisper_model, device="cpu", compute_type="int8")
             log("✅ Model downloaded and cached. Future runs of this model will be fully offline.")
+            return model
         except Exception as e:
             log(f"❌ Failed to load Whisper model: {e}")
             return None
+
+
+def transcribe_faster(audio_file, whisper_model, output_dir, log, queue_worker=None):
+    """
+    Transcribe with faster-whisper (pure Python, CPU int8). Emits progress
+    via `log(str)`. Returns the transcript string, or None on failure.
+    `queue_worker`, if given, is polled for `.stop_current` so a job can be
+    cancelled mid-transcription.
+    """
+    try:
+        model = _load_faster_whisper_model(whisper_model, log)
+    except ImportError:
+        log("faster-whisper not installed. Falling back to whisper-cli.")
+        return transcribe_cli(audio_file, whisper_model, output_dir, log, queue_worker)
+    if model is None:
+        return None
 
     try:
         log(f"🎤 Starting transcription of '{audio_file}'...")
@@ -220,6 +233,55 @@ def transcribe_faster(audio_file, whisper_model, output_dir, log, queue_worker=N
     with open(transcript_file, "w", encoding="utf-8") as f:
         f.write(transcript)
     return transcript
+
+
+def transcribe_faster_with_segments(audio_file, whisper_model, output_dir, log, queue_worker=None):
+    """
+    Same as transcribe_faster, but also returns the per-segment start/end
+    timestamps faster-whisper already computes (and transcribe_faster
+    discards) -- needed to align speaker-diarization turns to transcript
+    text. Returns (transcript, segments) where segments is a list of
+    {"start": float, "end": float, "text": str}, or (None, None) on
+    failure. whisper-cli has no equivalent (its plain -otxt output carries
+    no timestamps), so diarization is faster-whisper-only.
+    """
+    try:
+        model = _load_faster_whisper_model(whisper_model, log)
+    except ImportError:
+        log("faster-whisper not installed -- can't transcribe with segment timestamps for diarization.")
+        return None, None
+    if model is None:
+        return None, None
+
+    try:
+        log(f"🎤 Starting transcription of '{audio_file}'...")
+        raw_segments, info = model.transcribe(audio_file, beam_size=5)
+        log(f"📊 Language: {info.language}, probability: {info.language_probability:.2f}")
+
+        transcript_parts = []
+        segments = []
+        segment_count = 0
+        for seg in raw_segments:
+            if queue_worker is not None and getattr(queue_worker, "stop_current", False):
+                log("🛑 Cancelled during transcription.")
+                return None, None
+            segment_count += 1
+            text = seg.text.strip()
+            if text:
+                log(f"[{segment_count}] {text}")
+            transcript_parts.append(seg.text)
+            segments.append({"start": seg.start, "end": seg.end, "text": seg.text})
+
+        transcript = " ".join(transcript_parts)
+        log(f"✅ Transcription complete. {segment_count} segments processed.")
+    except Exception as e:
+        log(f"❌ Transcription error: {e}")
+        return None, None
+
+    transcript_file = Path(output_dir) / "transcript.txt"
+    with open(transcript_file, "w", encoding="utf-8") as f:
+        f.write(transcript)
+    return transcript, segments
 
 
 def transcribe_cli(audio_file, whisper_model, output_dir, log, queue_worker=None):

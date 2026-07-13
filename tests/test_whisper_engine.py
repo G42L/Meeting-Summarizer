@@ -307,3 +307,74 @@ def test_transcribe_faster_cancel_stops_mid_segments(tmp_path, monkeypatch):
     logs = []
     result = whisper_engine.transcribe_faster("audio.wav", "tiny", str(tmp_path), logs.append, qw)
     assert result is None
+
+
+# ---------------------------------------------------------------------
+# transcribe_faster_with_segments
+# ---------------------------------------------------------------------
+
+def test_transcribe_faster_with_segments_falls_back_to_none_if_not_installed(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "faster_whisper", None)
+    logs = []
+    transcript, segments = whisper_engine.transcribe_faster_with_segments("audio.wav", "tiny", str(tmp_path), logs.append)
+    assert transcript is None
+    assert segments is None
+    assert any("faster-whisper not installed" in line for line in logs)
+
+
+def test_transcribe_faster_with_segments_returns_timestamps(tmp_path, monkeypatch):
+    class FakeSegment:
+        def __init__(self, text, start, end):
+            self.text = text
+            self.start = start
+            self.end = end
+
+    class FakeInfo:
+        language = "en"
+        language_probability = 0.98
+
+    class FakeModel:
+        def __init__(self, *a, **k):
+            pass
+        def transcribe(self, audio_file, beam_size=5):
+            return [FakeSegment("hello", 0.0, 1.0), FakeSegment("world", 1.0, 2.0)], FakeInfo()
+
+    import faster_whisper
+    monkeypatch.setattr(faster_whisper, "WhisperModel", FakeModel)
+
+    logs = []
+    transcript, segments = whisper_engine.transcribe_faster_with_segments("audio.wav", "tiny", str(tmp_path), logs.append)
+    assert transcript == "hello world"
+    assert segments == [
+        {"start": 0.0, "end": 1.0, "text": "hello"},
+        {"start": 1.0, "end": 2.0, "text": "world"},
+    ]
+    assert (tmp_path / "transcript.txt").read_text(encoding="utf-8") == transcript
+
+
+def test_transcribe_faster_with_segments_cancel_stops_mid_segments(tmp_path, monkeypatch):
+    class FakeSegment:
+        def __init__(self, text, start, end):
+            self.text = text
+            self.start = start
+            self.end = end
+
+    class FakeInfo:
+        language = "en"
+        language_probability = 0.9
+
+    class FakeModel:
+        def __init__(self, *a, **k):
+            pass
+        def transcribe(self, audio_file, beam_size=5):
+            return [FakeSegment("one", 0, 1), FakeSegment("two", 1, 2)], FakeInfo()
+
+    import faster_whisper
+    monkeypatch.setattr(faster_whisper, "WhisperModel", FakeModel)
+
+    qw = _FakeQueueWorker()
+    qw.stop_current = True
+    logs = []
+    transcript, segments = whisper_engine.transcribe_faster_with_segments("audio.wav", "tiny", str(tmp_path), logs.append, qw)
+    assert transcript is None
+    assert segments is None

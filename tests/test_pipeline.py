@@ -40,6 +40,23 @@ def test_job_stores_fields():
     assert job.output_dir == "/tmp/x"
 
 
+def test_job_review_and_diarization_fields_default_off():
+    job = pipeline.Job("a.wav", "tiny", {}, "model", False)
+    assert job.review_transcript is False
+    assert job.enable_diarization is False
+    assert job.hf_token is None
+
+
+def test_job_stores_review_and_diarization_fields():
+    job = pipeline.Job(
+        "a.wav", "tiny", {}, "model", False,
+        review_transcript=True, enable_diarization=True, hf_token="hf_abc",
+    )
+    assert job.review_transcript is True
+    assert job.enable_diarization is True
+    assert job.hf_token == "hf_abc"
+
+
 # ---------------------------------------------------------------------
 # QueueWorker (pure flag/queue bookkeeping -- run()'s loop isn't exercised
 # here, it's a thin infinite-poll wrapper around ProcessingWorker.process)
@@ -153,8 +170,9 @@ def test_process_passes_queue_worker_to_summarize_for_cancellation(tmp_path, mon
 
     received = {}
 
-    def fake_summarize(transcript, backend_info, llm_model, on_chunk, log, queue_worker=None):
+    def fake_summarize(transcript, backend_info, llm_model, on_chunk, log, queue_worker=None, prompt_template=None):
         received["queue_worker"] = queue_worker
+        received["prompt_template"] = prompt_template
         return "summary"
 
     monkeypatch.setattr(pipeline.llm_backend, "summarize", fake_summarize)
@@ -162,11 +180,12 @@ def test_process_passes_queue_worker_to_summarize_for_cancellation(tmp_path, mon
 
     worker = pipeline.ProcessingWorker()
     _connect_collectors(worker)
-    job = pipeline.Job(str(audio), "tiny", {}, "model", False, output_dir=str(tmp_path))
+    job = pipeline.Job(str(audio), "tiny", {}, "model", False, output_dir=str(tmp_path), prompt_template="custom {transcript}")
     qw = FakeQueueWorkerFlag()
     worker.process(job, qw)
 
     assert received["queue_worker"] is qw
+    assert received["prompt_template"] == "custom {transcript}"
 
 
 def test_process_uses_new_output_dir_when_none_given(tmp_path, monkeypatch):
@@ -201,3 +220,174 @@ def test_process_exception_is_caught_and_reported_as_error(tmp_path, monkeypatch
     worker.process(job, FakeQueueWorkerFlag())
 
     assert events["error"] == ["disk on fire"]
+
+
+# ---------------------------------------------------------------------
+# Transcript review (job.review_transcript)
+#
+# process()'s review wait is a plain `while ...: QThread.msleep(100)` poll
+# loop -- same idiom already used for Cancel. Monkeypatching QThread.msleep
+# lets these tests simulate "the GUI answered instantly" without a real
+# thread or a real sleep.
+# ---------------------------------------------------------------------
+
+def test_process_emits_transcript_ready_and_uses_edited_result(tmp_path, monkeypatch):
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"fake")
+    monkeypatch.setattr(pipeline.whisper_engine, "transcribe", lambda *a, **k: "original transcript")
+
+    received = {}
+
+    def fake_summarize(transcript, backend_info, llm_model, on_chunk, log, queue_worker=None, prompt_template=None):
+        received["transcript"] = transcript
+        return "summary"
+
+    monkeypatch.setattr(pipeline.llm_backend, "summarize", fake_summarize)
+    monkeypatch.setattr(pipeline.llm_backend, "save_markdown", lambda *a, **k: "md.md")
+
+    worker = pipeline.ProcessingWorker()
+    events = _connect_collectors(worker)
+    transcript_ready_events = []
+    worker.transcript_ready.connect(transcript_ready_events.append)
+
+    def fake_msleep(ms):
+        # First poll tick: pretend the GUI thread just answered "Continue"
+        # with edited text.
+        worker.review_result = "edited transcript"
+
+    monkeypatch.setattr(pipeline.QThread, "msleep", fake_msleep)
+
+    job = pipeline.Job(str(audio), "tiny", {}, "model", False, output_dir=str(tmp_path), review_transcript=True)
+    worker.process(job, FakeQueueWorkerFlag())
+
+    assert transcript_ready_events == ["original transcript"]
+    assert received["transcript"] == "edited transcript"
+    assert events["error"] == []
+    assert events["finished"] == ["md.md"]
+
+
+def test_process_review_cancelled_aborts_job(tmp_path, monkeypatch):
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"fake")
+    monkeypatch.setattr(pipeline.whisper_engine, "transcribe", lambda *a, **k: "original transcript")
+
+    summarize_calls = []
+    monkeypatch.setattr(pipeline.llm_backend, "summarize", lambda *a, **k: summarize_calls.append(1))
+
+    worker = pipeline.ProcessingWorker()
+    events = _connect_collectors(worker)
+
+    def fake_msleep(ms):
+        worker.review_cancelled = True
+
+    monkeypatch.setattr(pipeline.QThread, "msleep", fake_msleep)
+
+    job = pipeline.Job(str(audio), "tiny", {}, "model", False, output_dir=str(tmp_path), review_transcript=True)
+    worker.process(job, FakeQueueWorkerFlag())
+
+    assert summarize_calls == []  # never reached summarization
+    assert events["error"] == ["Cancelled during transcript review."]
+
+
+def test_process_review_stops_promptly_on_queue_cancel(tmp_path, monkeypatch):
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"fake")
+    monkeypatch.setattr(pipeline.whisper_engine, "transcribe", lambda *a, **k: "original transcript")
+
+    qw = FakeQueueWorkerFlag()
+    calls = {"n": 0}
+
+    def fake_msleep(ms):
+        calls["n"] += 1
+        qw.stop_current = True
+        if calls["n"] > 5:
+            raise AssertionError("review poll loop did not exit after cancellation")
+
+    monkeypatch.setattr(pipeline.QThread, "msleep", fake_msleep)
+
+    worker = pipeline.ProcessingWorker()
+    events = _connect_collectors(worker)
+    job = pipeline.Job(str(audio), "tiny", {}, "model", False, output_dir=str(tmp_path), review_transcript=True)
+    worker.process(job, qw)
+
+    assert events["error"] == ["Cancelled by user."]
+
+
+# ---------------------------------------------------------------------
+# Diarization (job.enable_diarization)
+# ---------------------------------------------------------------------
+
+def test_process_diarization_labels_transcript_when_available(tmp_path, monkeypatch):
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"fake")
+    segments = [{"start": 0.0, "end": 1.0, "text": "hi"}]
+    monkeypatch.setattr(
+        pipeline.whisper_engine, "transcribe_faster_with_segments",
+        lambda *a, **k: ("hi", segments),
+    )
+    monkeypatch.setattr(pipeline.diarization, "is_available", lambda: True)
+    turns = [{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}]
+    monkeypatch.setattr(pipeline.diarization, "diarize", lambda *a, **k: turns)
+    monkeypatch.setattr(pipeline.diarization, "label_transcript", lambda segs, trns: "**SPEAKER_00:** hi")
+
+    received = {}
+    monkeypatch.setattr(
+        pipeline.llm_backend, "summarize",
+        lambda transcript, *a, **k: received.setdefault("transcript", transcript) or "summary",
+    )
+    monkeypatch.setattr(pipeline.llm_backend, "save_markdown", lambda *a, **k: "md.md")
+
+    worker = pipeline.ProcessingWorker()
+    events = _connect_collectors(worker)
+    job = pipeline.Job(str(audio), "tiny", {}, "model", False, output_dir=str(tmp_path), enable_diarization=True)
+    worker.process(job, FakeQueueWorkerFlag())
+
+    assert received["transcript"] == "**SPEAKER_00:** hi"
+    assert events["error"] == []
+
+
+def test_process_diarization_falls_back_to_plain_transcript_when_unavailable(tmp_path, monkeypatch):
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"fake")
+    segments = [{"start": 0.0, "end": 1.0, "text": "hi"}]
+    monkeypatch.setattr(
+        pipeline.whisper_engine, "transcribe_faster_with_segments",
+        lambda *a, **k: ("hi", segments),
+    )
+    monkeypatch.setattr(pipeline.diarization, "is_available", lambda: False)
+
+    received = {}
+    monkeypatch.setattr(
+        pipeline.llm_backend, "summarize",
+        lambda transcript, *a, **k: received.setdefault("transcript", transcript) or "summary",
+    )
+    monkeypatch.setattr(pipeline.llm_backend, "save_markdown", lambda *a, **k: "md.md")
+
+    worker = pipeline.ProcessingWorker()
+    events = _connect_collectors(worker)
+    job = pipeline.Job(str(audio), "tiny", {}, "model", False, output_dir=str(tmp_path), enable_diarization=True)
+    worker.process(job, FakeQueueWorkerFlag())
+
+    assert received["transcript"] == "hi"  # plain transcript, no labeling
+    assert events["error"] == []
+
+
+def test_process_diarization_skipped_when_using_whisper_cli(tmp_path, monkeypatch):
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"fake")
+    monkeypatch.setattr(pipeline.whisper_engine, "transcribe", lambda *a, **k: "cli transcript")
+
+    def fail_if_called(*a, **k):
+        raise AssertionError("transcribe_faster_with_segments should not be called for whisper-cli jobs")
+
+    monkeypatch.setattr(pipeline.whisper_engine, "transcribe_faster_with_segments", fail_if_called)
+    monkeypatch.setattr(pipeline.llm_backend, "summarize", lambda *a, **k: "summary")
+    monkeypatch.setattr(pipeline.llm_backend, "save_markdown", lambda *a, **k: "md.md")
+
+    worker = pipeline.ProcessingWorker()
+    events = _connect_collectors(worker)
+    job = pipeline.Job(str(audio), "tiny", {}, "model", True, output_dir=str(tmp_path), enable_diarization=True)
+    worker.process(job, FakeQueueWorkerFlag())
+
+    assert events["error"] == []
+    assert events["finished"] == ["md.md"]

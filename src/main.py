@@ -27,10 +27,13 @@ import soundfile as sf
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QComboBox, QPushButton, QTextEdit, QProgressBar,
-    QGroupBox, QFileDialog, QMessageBox, QCheckBox, QSizePolicy, QSlider
+    QGroupBox, QFileDialog, QMessageBox, QCheckBox, QSizePolicy, QSlider,
+    QPlainTextEdit, QListWidget, QListWidgetItem, QLineEdit, QDialog,
+    QDialogButtonBox, QSystemTrayIcon, QMenu, QShortcut, QFrame,
+    QGraphicsDropShadowEffect
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer
-from PyQt5.QtGui import QIcon, QFont
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QSettings, QPropertyAnimation, QEasingCurve, QPoint
+from PyQt5.QtGui import QIcon, QFont, QKeySequence, QCursor
 
 from . import audio_engine
 from . import vu_meters
@@ -153,6 +156,157 @@ class GpuRow(QWidget):
             self.vram_value_label.setText(f"{vram_used / 1024:.1f}/{vram_total / 1024:.1f} GB")
 
 
+# ----------------------------------------------------------------------
+# Modal dialog shown mid-job when Job.review_transcript is True. The
+# ProcessingWorker that requested this is paused in a polling loop on the
+# queue thread (see pipeline.ProcessingWorker.process) -- Continue/Cancel
+# here just set plain attributes on that worker instance to unblock it,
+# the same attribute-polling idiom already used for Cancel-the-whole-job.
+# ----------------------------------------------------------------------
+class TranscriptReviewDialog(QDialog):
+    def __init__(self, transcript, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Review Transcript")
+        self.resize(700, 500)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Edit the transcript below if needed, then continue to summarization:"))
+
+        self.text_edit = QPlainTextEdit()
+        self.text_edit.setPlainText(transcript)
+        layout.addWidget(self.text_edit)
+
+        buttons = QDialogButtonBox()
+        continue_btn = buttons.addButton("✅ Continue", QDialogButtonBox.AcceptRole)
+        cancel_btn = buttons.addButton("❌ Cancel Job", QDialogButtonBox.RejectRole)
+        continue_btn.clicked.connect(self.accept)
+        cancel_btn.clicked.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def text(self):
+        return self.text_edit.toPlainText()
+
+
+# ----------------------------------------------------------------------
+# Floating history sidebar, styled after the collapsible conversation-
+# history sidebars in some LLM chat UIs: a thin handle stays permanently
+# visible at the left edge; hovering it slides the full panel out over the
+# window content, and moving the mouse away (after a short grace period,
+# so briefly crossing the edge doesn't flicker) collapses it again.
+#
+# This widget is deliberately never added to a layout -- it's a plain
+# child of `central`, positioned by hand and raised above its siblings.
+# Qt clips child widgets to the parent's rectangle automatically, so a
+# height much taller than any real window just gets cropped for free;
+# that means this never has to track window-resize events to stay full
+# height, and its floating-above-everything-else behavior costs nothing
+# more than not calling layout.addWidget(...) on it.
+# ----------------------------------------------------------------------
+class HistorySidebar(QWidget):
+    PANEL_WIDTH = 280
+    HANDLE_WIDTH = 14
+    ANIMATION_MS = 180
+    COLLAPSE_DELAY_MS = 250
+    TALL_ENOUGH_HEIGHT = 3000  # cropped to the real window height by Qt's child clipping
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setFixedSize(self.PANEL_WIDTH, self.TALL_ENOUGH_HEIGHT)
+
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        content = QFrame()
+        content.setFrameShape(QFrame.StyledPanel)
+        content.setAutoFillBackground(True)
+        content_layout = QVBoxLayout(content)
+        content_layout.addWidget(QLabel("History (past sessions)"))
+
+        btn_row = QHBoxLayout()
+        self.refresh_btn = QPushButton("🔄 Refresh")
+        btn_row.addWidget(self.refresh_btn)
+        self.open_folder_btn = QPushButton("📂 Open Folder")
+        btn_row.addWidget(self.open_folder_btn)
+        content_layout.addLayout(btn_row)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setToolTip("Double-click a session to open its summary.md")
+        content_layout.addWidget(self.list_widget)
+        outer.addWidget(content, stretch=1)
+
+        handle = QFrame()
+        handle.setFrameShape(QFrame.StyledPanel)
+        handle.setAutoFillBackground(True)
+        handle.setFixedWidth(self.HANDLE_WIDTH)
+        handle_layout = QVBoxLayout(handle)
+        handle_layout.setContentsMargins(0, 8, 0, 0)
+        handle_label = QLabel("🕘")
+        handle_label.setAlignment(Qt.AlignHCenter)
+        handle_layout.addWidget(handle_label)
+        handle_layout.addStretch()
+        outer.addWidget(handle)
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(24)
+        shadow.setOffset(3, 0)
+        self.setGraphicsEffect(shadow)
+
+        self._collapse_timer = QTimer(self)
+        self._collapse_timer.setSingleShot(True)
+        self._collapse_timer.setInterval(self.COLLAPSE_DELAY_MS)
+        self._collapse_timer.timeout.connect(self._collapse)
+
+        self._animation = QPropertyAnimation(self, b"pos", self)
+        self._animation.setDuration(self.ANIMATION_MS)
+        self._animation.setEasingCurve(QEasingCurve.OutCubic)
+
+        # Polling the real cursor position instead of relying on
+        # enterEvent/leaveEvent: Qt's enter/leave delivery for a raised,
+        # partly-off-screen overlay like this one is unreliable exactly at
+        # window-focus/re-entry boundaries (e.g. alt-tabbing back in can
+        # synthesize a spurious Enter regardless of where the cursor
+        # actually is), which was popping the sidebar open on its own.
+        # Checking the true cursor position directly sidesteps that whole
+        # class of platform quirk. Same "one continuous QTimer" pattern
+        # already used for monitor_timer/sysmon_timer elsewhere.
+        self._hovered = False
+        self._hover_poll_timer = QTimer(self)
+        self._hover_poll_timer.setInterval(100)
+        self._hover_poll_timer.timeout.connect(self._check_hover)
+        self._hover_poll_timer.start()
+
+        self.reposition(expanded=False)
+
+    def reposition(self, expanded, animate=False):
+        target_x = 0 if expanded else -(self.PANEL_WIDTH - self.HANDLE_WIDTH)
+        target = QPoint(target_x, 0)
+        if animate:
+            self._animation.stop()
+            self._animation.setStartValue(self.pos())
+            self._animation.setEndValue(target)
+            self._animation.start()
+        else:
+            self.move(target)
+
+    def _collapse(self):
+        self.reposition(expanded=False, animate=True)
+
+    def _check_hover(self):
+        window = self.window()
+        local_pos = self.mapFromGlobal(QCursor.pos())
+        is_hovered = window.isActiveWindow() and self.rect().contains(local_pos)
+
+        if is_hovered and not self._hovered:
+            self._hovered = True
+            self._collapse_timer.stop()
+            self.raise_()
+            self.reposition(expanded=True, animate=True)
+        elif not is_hovered and self._hovered:
+            self._hovered = False
+            self._collapse_timer.start()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -179,9 +333,12 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(icon_path))
 
         self.setup_ui()
+        self.setup_tray_icon(icon_path)
+        self.setup_shortcuts()
         self.refresh_source_picker()
         self.refresh_whisper_models()
         self.refresh_backends()
+        self.refresh_history()
 
         self.queue_worker = pipeline.QueueWorker()
         self.queue_thread = QThread()
@@ -195,6 +352,7 @@ class MainWindow(QMainWindow):
         self.queue_worker.job_finished.connect(self.on_job_finished)
         self.queue_worker.job_error.connect(self.on_error)
         self.queue_worker.job_started.connect(self.on_job_started)
+        self.queue_worker.transcript_ready.connect(self.on_transcript_ready)
 
         self.whisper_combo.currentIndexChanged.connect(self.on_whisper_model_changed)
 
@@ -223,6 +381,13 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
+        # Reserve the collapsed sidebar handle's width as permanent left
+        # margin, so its ever-visible strip sits in its own space instead
+        # of overlapping the leftmost few pixels of every section's text.
+        margins = layout.contentsMargins()
+        layout.setContentsMargins(
+            margins.left() + HistorySidebar.HANDLE_WIDTH, margins.top(), margins.right(), margins.bottom()
+        )
 
         action_btn_style = (f"height: {self.button_height}px; border-radius: {self.button_radius}px; padding: 8px; border: 1px solid #cccccc;")
         refresh_btn_style = (f"border-radius: {self.button_radius}px; padding: 8px; border: 1px solid #cccccc;")
@@ -261,6 +426,8 @@ class MainWindow(QMainWindow):
 
         # ----- Whisper model -----
         self.whisper_group = QGroupBox("Whisper Model")
+        whisper_group_layout = QVBoxLayout()
+
         whisper_layout = QHBoxLayout()
         whisper_layout.addWidget(QLabel("Model:"))
         self.whisper_combo = QComboBox()
@@ -268,12 +435,43 @@ class MainWindow(QMainWindow):
         whisper_layout.addWidget(self.whisper_combo)
         self.use_cli_check = QCheckBox("Use whisper-cli (requires built binary)")
         self.use_cli_check.setToolTip("If unchecked, uses faster-whisper (Python)")
+        self.use_cli_check.toggled.connect(self.on_use_cli_toggled)
         whisper_layout.addWidget(self.use_cli_check)
         refresh_whisper_btn = QPushButton("Refresh")
         refresh_whisper_btn.clicked.connect(self.refresh_whisper_models)
         whisper_layout.addWidget(refresh_whisper_btn)
-        self.whisper_group.setLayout(whisper_layout)
+        whisper_group_layout.addLayout(whisper_layout)
+
+        review_layout = QHBoxLayout()
+        self.review_transcript_check = QCheckBox("📝 Review transcript before summarizing")
+        self.review_transcript_check.setToolTip(
+            "Pause after transcription so you can read/edit the text before it's sent to the LLM"
+        )
+        review_layout.addWidget(self.review_transcript_check)
+        review_layout.addStretch()
+        whisper_group_layout.addLayout(review_layout)
+
+        diarization_layout = QHBoxLayout()
+        self.diarization_check = QCheckBox("🗣️ Label speakers (diarization)")
+        self.diarization_check.setToolTip(
+            "Requires the faster-whisper backend (not whisper-cli), pyannote.audio installed, "
+            "and a Hugging Face token with the gated 'pyannote/speaker-diarization-3.1' model's "
+            "terms accepted at huggingface.co"
+        )
+        self.diarization_check.toggled.connect(self.on_diarization_toggled)
+        diarization_layout.addWidget(self.diarization_check)
+        diarization_layout.addWidget(QLabel("HF Token:"))
+        self.hf_token_edit = QLineEdit()
+        self.hf_token_edit.setEchoMode(QLineEdit.Password)
+        self.hf_token_edit.setPlaceholderText("hf_...")
+        self.hf_token_edit.setEnabled(False)
+        diarization_layout.addWidget(self.hf_token_edit, stretch=1)
+        whisper_group_layout.addLayout(diarization_layout)
+
+        self.whisper_group.setLayout(whisper_group_layout)
         layout.addWidget(self.whisper_group)
+
+        self._load_diarization_settings()
 
         # ----- LLM Backend and Model -----
         self.llm_group = QGroupBox("LLM Backend")
@@ -292,6 +490,33 @@ class MainWindow(QMainWindow):
         llm_layout.addWidget(refresh_backend_btn)
         self.llm_group.setLayout(llm_layout)
         layout.addWidget(self.llm_group)
+
+        # ----- Summary Style (prompt template picker) -----
+        self.prompt_style_group = QGroupBox("Summary Style")
+        prompt_style_layout = QVBoxLayout()
+
+        prompt_style_row = QHBoxLayout()
+        prompt_style_row.addWidget(QLabel("Style:"))
+        self.prompt_style_combo = QComboBox()
+        self.prompt_style_combo.addItems(list(llm_backend.PROMPT_TEMPLATES.keys()) + ["Custom..."])
+        self.prompt_style_combo.setToolTip("How the LLM should summarize the transcript")
+        self.prompt_style_combo.currentTextChanged.connect(self.on_prompt_style_changed)
+        prompt_style_row.addWidget(self.prompt_style_combo, stretch=1)
+        prompt_style_layout.addLayout(prompt_style_row)
+
+        self.custom_prompt_edit = QPlainTextEdit()
+        self.custom_prompt_edit.setMaximumHeight(80)
+        self.custom_prompt_edit.setPlaceholderText(
+            "Write your own prompt. Must include {transcript} where the transcript should be inserted."
+        )
+        self.custom_prompt_edit.setToolTip("The literal text {transcript} will be replaced with the full transcript.")
+        self.custom_prompt_edit.setVisible(False)
+        prompt_style_layout.addWidget(self.custom_prompt_edit)
+
+        self.prompt_style_group.setLayout(prompt_style_layout)
+        layout.addWidget(self.prompt_style_group)
+
+        self._load_prompt_style_settings()
 
         # ----- Audio Visualization (mixed waveform + combined VU) -----
         vis_group = QGroupBox("Audio Monitor (mixed output)")
@@ -426,7 +651,71 @@ class MainWindow(QMainWindow):
 
         self.last_md_path = None
 
+        # ----- History (past sessions from ./transcripts/) -----
+        # Floating overlay, not part of `layout` -- see HistorySidebar's
+        # docstring. Built last so it raises above every widget already
+        # added above.
+        self.history_sidebar = HistorySidebar(central)
+        self.history_sidebar.refresh_btn.clicked.connect(self.refresh_history)
+        self.history_sidebar.open_folder_btn.clicked.connect(self.open_selected_history_folder)
+        self.history_sidebar.list_widget.itemDoubleClicked.connect(self.open_history_summary)
+        self.history_sidebar.raise_()
+
+    # ------------------------------------------------------------------
+    # System tray + shortcuts
+    # ------------------------------------------------------------------
+    def setup_tray_icon(self, icon_path):
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray_icon = None
+            return
+
+        icon = QIcon(icon_path) if os.path.exists(icon_path) else self.windowIcon()
+        self.tray_icon = QSystemTrayIcon(icon, self)
+        self.tray_icon.setToolTip("Meeting Transcriber")
+
+        menu = QMenu()
+        self.tray_show_action = menu.addAction("Show/Hide")
+        self.tray_show_action.triggered.connect(self.toggle_window_visibility)
+        self.tray_record_action = menu.addAction("🎤 Record")
+        self.tray_record_action.triggered.connect(self.toggle_recording)
+        menu.addSeparator()
+        quit_action = menu.addAction("Quit")
+        quit_action.triggered.connect(self.close)
+
+        # Sync the label with self.record_btn ("🎤 Record"/"⏹ Stop") right
+        # before the menu opens, rather than updating it from every place
+        # that changes record_btn's text.
+        menu.aboutToShow.connect(lambda: self.tray_record_action.setText(self.record_btn.text()))
+
+        self.tray_icon.setContextMenu(menu)
+        self.tray_icon.activated.connect(self._on_tray_activated)
+        self.tray_icon.show()
+
+    def _on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.Trigger:  # single left-click
+            self.toggle_window_visibility()
+
+    def toggle_window_visibility(self):
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show()
+            self.raise_()
+            self.activateWindow()
+
+    def setup_shortcuts(self):
+        # Qt.ApplicationShortcut fires regardless of which widget inside the
+        # app currently has focus -- not a true OS-wide global hotkey (which
+        # would need a new cross-platform dependency and doesn't reliably
+        # work on Wayland anyway), just "works anywhere in this app".
+        self.record_shortcut = QShortcut(QKeySequence("Ctrl+Alt+R"), self)
+        self.record_shortcut.setContext(Qt.ApplicationShortcut)
+        self.record_shortcut.activated.connect(self.toggle_recording)
+        self.record_btn.setToolTip("Start/stop recording (Ctrl+Alt+R)")
+
     def closeEvent(self, event):
+        self._save_prompt_style_settings()
+        self._save_diarization_settings()
         self.mixer.shutdown()  # stop() alone would leave sources monitoring; we're closing for good
         if self.queue_worker:
             self.queue_worker.stop()
@@ -910,6 +1199,28 @@ class MainWindow(QMainWindow):
                 self.whisper_combo.setCurrentIndex(target_index)
 
     # ------------------------------------------------------------------
+    # Diarization settings
+    # ------------------------------------------------------------------
+    def on_use_cli_toggled(self, checked):
+        # Diarization needs faster-whisper's per-segment timestamps;
+        # whisper-cli's plain -otxt output has none, so grey it out rather
+        # than letting the user pick a combination that can't work.
+        if checked:
+            self.diarization_check.setChecked(False)
+        self.diarization_check.setEnabled(not checked)
+
+    def on_diarization_toggled(self, checked):
+        self.hf_token_edit.setEnabled(checked)
+
+    def _load_diarization_settings(self):
+        settings = QSettings("MeetingTranscriber", "MeetingTranscriber")
+        self.hf_token_edit.setText(settings.value("diarization/hf_token", ""))
+
+    def _save_diarization_settings(self):
+        settings = QSettings("MeetingTranscriber", "MeetingTranscriber")
+        settings.setValue("diarization/hf_token", self.hf_token_edit.text())
+
+    # ------------------------------------------------------------------
     # Model download
     # ------------------------------------------------------------------
     def download_model(self, model_name):
@@ -991,8 +1302,15 @@ class MainWindow(QMainWindow):
             return
 
         use_cli = self.use_cli_check.isChecked()
+        prompt_template = self._current_prompt_template()
 
-        job = pipeline.Job(audio_file_path, whisper_model, backend_info, llm_model, use_cli, output_dir=output_dir)
+        job = pipeline.Job(
+            audio_file_path, whisper_model, backend_info, llm_model, use_cli,
+            output_dir=output_dir, prompt_template=prompt_template,
+            review_transcript=self.review_transcript_check.isChecked(),
+            enable_diarization=self.diarization_check.isChecked(),
+            hf_token=self.hf_token_edit.text() or None,
+        )
         self.queue_worker.add_job(job)
         self.job_count += 1
         self.update_config_lock()
@@ -1017,6 +1335,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(100)
 
         self.cancel_btn.setEnabled(False)
+        self.refresh_history()
 
     def on_job_started(self, job_id):
         self.append_log(f"🔄 Processing job #{job_id}...")
@@ -1027,6 +1346,21 @@ class MainWindow(QMainWindow):
             self.queue_worker.stop_current_job()
             self.append_log("⏹ Cancelling current job...")
             self.cancel_btn.setEnabled(False)
+
+    def on_transcript_ready(self, transcript):
+        """
+        The active ProcessingWorker is paused, polling review_result/
+        review_cancelled on itself (see pipeline.ProcessingWorker.process)
+        -- Continue/Cancel here just set one of those to unblock it.
+        """
+        processor = self.queue_worker.current_processor
+        if processor is None:
+            return  # job finished/cancelled before the dialog could open
+        dialog = TranscriptReviewDialog(transcript, self)
+        if dialog.exec_() == QDialog.Accepted:
+            processor.review_result = dialog.text()
+        else:
+            processor.review_cancelled = True
 
     def on_error(self, msg):
         self.append_log(f"❌ Error: {msg}")
@@ -1105,18 +1439,81 @@ class MainWindow(QMainWindow):
         else:
             transcripts_dir = Path.cwd() / "transcripts"
             folder = str(transcripts_dir) if transcripts_dir.exists() else os.getcwd()
+        self._open_path(folder)
+
+    def _open_path(self, path):
+        """Open a file or folder with whatever the OS considers its default app."""
         if sys.platform == "win32":
-            os.startfile(folder)
+            os.startfile(path)
         elif sys.platform == "darwin":
-            subprocess.Popen(["open", folder])
+            subprocess.Popen(["open", path])
         else:
-            subprocess.Popen(["xdg-open", folder])
+            subprocess.Popen(["xdg-open", path])
 
     def clear_log(self):
         self._console_render_timer.stop()
         self._console_md = ""
         self._console_last_was_summary = False
         self.log_text.clear()
+
+    # ---------- Summary Style (prompt templates) ----------
+    def on_prompt_style_changed(self, style_name):
+        self.custom_prompt_edit.setVisible(style_name == "Custom...")
+
+    def _load_prompt_style_settings(self):
+        settings = QSettings("MeetingTranscriber", "MeetingTranscriber")
+        selected_text = settings.value("prompt_style/selected_text", "Standard Minutes")
+        custom_text = settings.value("prompt_style/custom_text", "")
+
+        self.custom_prompt_edit.setPlainText(custom_text)
+        index = self.prompt_style_combo.findText(selected_text)
+        self.prompt_style_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.custom_prompt_edit.setVisible(self.prompt_style_combo.currentText() == "Custom...")
+
+    def _save_prompt_style_settings(self):
+        settings = QSettings("MeetingTranscriber", "MeetingTranscriber")
+        settings.setValue("prompt_style/selected_text", self.prompt_style_combo.currentText())
+        settings.setValue("prompt_style/custom_text", self.custom_prompt_edit.toPlainText())
+
+    def _current_prompt_template(self):
+        style_name = self.prompt_style_combo.currentText()
+        if style_name != "Custom...":
+            return llm_backend.PROMPT_TEMPLATES.get(style_name)
+
+        custom_text = self.custom_prompt_edit.toPlainText().strip()
+        if custom_text and "{transcript}" not in custom_text:
+            self.append_log(
+                "⚠️ Custom summary template has no {transcript} placeholder -- "
+                "the transcript will not be included in the prompt."
+            )
+        return custom_text or None
+
+    # ---------- History (past sessions) ----------
+    def refresh_history(self):
+        self.history_sidebar.list_widget.clear()
+        transcripts_dir = Path.cwd() / "transcripts"
+        for session in llm_backend.list_past_sessions(transcripts_dir):
+            text = session["timestamp"]
+            if session["summary_snippet"]:
+                text += f"  —  {session['summary_snippet']}"
+            item = QListWidgetItem(text)
+            item.setData(Qt.UserRole, session)
+            self.history_sidebar.list_widget.addItem(item)
+
+    def open_selected_history_folder(self):
+        item = self.history_sidebar.list_widget.currentItem()
+        if item is None:
+            QMessageBox.information(self, "No selection", "Select a session first.")
+            return
+        session = item.data(Qt.UserRole)
+        self._open_path(str(session["folder"]))
+
+    def open_history_summary(self, item):
+        session = item.data(Qt.UserRole)
+        if not session["md_path"]:
+            QMessageBox.information(self, "No summary", "This session has no summary.md (the job may not have completed).")
+            return
+        self._open_path(session["md_path"])
 
     # ---------- Lock configuration ----------
     def update_config_lock(self):
@@ -1125,6 +1522,7 @@ class MainWindow(QMainWindow):
         self.dev_group.setEnabled(enabled)
         self.whisper_group.setEnabled(enabled)
         self.llm_group.setEnabled(enabled)
+        self.prompt_style_group.setEnabled(enabled)
 
 
 # ----------------------------------------------------------------------
