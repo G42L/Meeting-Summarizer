@@ -1,0 +1,37 @@
+# Core
+PyQt5>=5.15
+numpy>=1.24
+miniaudio>=1.71    # self-contained audio capture -- no system PortAudio/ALSA-dev needed
+soundfile>=0.12
+requests>=2.31
+psutil>=5.9        # CPU/RAM stats for the System monitor panel
+
+# Whisper (Python backend) — optional if you only use whisper-cli
+faster-whisper>=1.0
+
+# GPU/VRAM stats for the System monitor panel — optional, NVIDIA only.
+# sysmon.py degrades gracefully (GPU just won't show live NVIDIA stats) if
+# this isn't installed or there's no NVIDIA driver; AMD/Intel GPUs on Linux
+# are still detected without this, via sysfs. See sysmon.py's docstring.
+nvidia-ml-py>=12.0
+
+# ---------------------------------------------------------------
+# Platform-specific system-audio (Teams/loopback) capture:
+#
+# Windows — install sounddevice too (bundles PortAudio automatically,
+#   nothing extra to apt/brew install):
+#     pip install sounddevice
+#   Only needed if you actually add a "(loopback)" source; the app runs
+#   fine without it otherwise. miniaudio's Python binding doesn't expose
+#   WASAPI loopback, which is why this one path still uses sounddevice.
+#
+# macOS — install BlackHole (free virtual audio driver, not a pip
+#   package): https://existential.audio/blackhole/
+#   Route Teams's output (or a macOS Multi-Output Device combining
+#   BlackHole + your speakers) to it -- it then just appears as a normal
+#   input device, captured by miniaudio like a microphone.
+#
+# Linux — nothing extra needed. Every PulseAudio/PipeWire sink already
+#   has a ".monitor" source you can select directly in the Add Source
+#   picker, and miniaudio talks to it with zero system packages.
+# ---------------------------------------------------------------
