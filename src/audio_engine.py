@@ -264,6 +264,7 @@ class AudioSource:
 
         self.gain = gain
         self.muted = False
+        self.full_mute = False   # while muted, also silences this source's own dedicated VU meter
 
         self.level = 0.0          # latest RMS (0..1-ish), for the per-source VU meter
         self.error = None         # last stream error message, if any
@@ -458,9 +459,21 @@ class AudioMixerEngine:
         if name in self.sources:
             self.sources[name].gain = max(0.0, gain)
 
-    def set_muted(self, name, muted):
+    def set_muted(self, name, muted, full_mute=False):
+        """
+        `muted` excludes the source from the mix (_handle_chunk's audio-
+        thread hot path only checks this one flag, unaffected either way).
+        `full_mute`, only meaningful while muted, additionally makes
+        get_source_level() report silence for this source's own dedicated
+        VU meter -- the "short press" mode. Long-press mode just leaves
+        full_mute False, so the mix is muted but that row's meter (and the
+        audio thread's per-chunk level calc, which never looks at either
+        flag) keeps showing real activity.
+        """
         if name in self.sources:
-            self.sources[name].muted = muted
+            source = self.sources[name]
+            source.muted = muted
+            source.full_mute = full_mute if muted else False
 
     # ---------------- recording lifecycle (Record / Stop button) ----------------
 
@@ -556,7 +569,9 @@ class AudioMixerEngine:
 
     def get_source_level(self, name):
         source = self.sources.get(name)
-        return source.level if source else 0.0
+        if source is None or source.full_mute:
+            return 0.0
+        return source.level
 
     def get_source_errors(self):
         return {name: s.error for name, s in self.sources.items() if s.error}

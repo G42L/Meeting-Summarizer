@@ -251,7 +251,7 @@ class FlatIconButton(QPushButton):
     can't give a plain QPushButton this "just an icon, nothing else" look
     reliably across platforms, so it's set directly here instead. Shared
     base for HoverColorIconButton (e.g. remove-source, recolors on hover)
-    and ToggleIconButton (e.g. mute/unmute, swaps icon shape on check),
+    and MuteButton (mute/unmute, swaps icon shape on click vs. long-press),
     so both get identical sizing/style and only differ in what actually
     changes (color vs. icon).
     """
@@ -296,26 +296,67 @@ class HoverColorIconButton(FlatIconButton):
         super().leaveEvent(event)
 
 
-class ToggleIconButton(FlatIconButton):
-    """A checkable FlatIconButton that swaps between two icon *shapes*
-    based on checked state (e.g. volume-high/volume-disabled for
-    mute/unmute) -- unlike HoverColorIconButton, the color never changes,
-    only which icon is shown."""
-    def __init__(self, icon_off, icon_on, size=18, tooltip_off="", tooltip_on="", parent=None):
-        super().__init__(size, parent)
-        self.setCheckable(True)
-        self._icon_off = icon_off
-        self._icon_on = icon_on
-        self._tooltip_off = tooltip_off
-        self._tooltip_on = tooltip_on
-        self.toggled.connect(self._update_icon)
-        self._update_icon(False)
+class MuteButton(FlatIconButton):
+    """
+    A three-state mute control distinguishing a quick click from a
+    press-and-hold, since Qt has no built-in long-press gesture:
 
-    def _update_icon(self, checked):
-        icon_name = self._icon_on if checked else self._icon_off
+      - short click : toggle "none" <-> "short" (full mute -- excluded
+        from the mix AND this source's own dedicated VU meter goes silent)
+      - long press  : toggle "none" <-> "long" (mix-only mute -- excluded
+        from the mix, but the VU meter keeps showing real activity; this
+        is the mute behavior the app had before short/long were split out)
+
+    Cross-mode gestures are deliberately asymmetric (confirmed as the
+    intended UX, not an oversight): a short click while long-muted just
+    unmutes (has to be a deliberate second click to reach short-mute from
+    there), but a long-press while short-muted switches directly to
+    long-mute in one gesture.
+    """
+    LONG_PRESS_MS = 500
+    ICON_FOR_MODE = {"none": "volume-high", "short": "volume-muted", "long": "volume-disabled"}
+    mode_changed = pyqtSignal(str)   # "none" | "short" | "long"
+
+    def __init__(self, size=18, parent=None):
+        super().__init__(size, parent)
+        self._mode = "none"
+        self._long_press_fired = False
+        self._long_press_timer = QTimer(self)
+        self._long_press_timer.setSingleShot(True)
+        self._long_press_timer.setInterval(self.LONG_PRESS_MS)
+        self._long_press_timer.timeout.connect(self._trigger_long_press)
+        self._update_icon()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._long_press_fired = False
+            self._long_press_timer.start()
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._long_press_timer.stop()
+            if not self._long_press_fired and self.rect().contains(event.pos()):
+                self._set_mode("short" if self._mode == "none" else "none")
+        super().mouseReleaseEvent(event)
+
+    def _trigger_long_press(self):
+        self._long_press_fired = True
+        self._set_mode("none" if self._mode == "long" else "long")
+
+    def _set_mode(self, mode):
+        self._mode = mode
+        self._update_icon()
+        self.mode_changed.emit(mode)
+
+    def _update_icon(self):
         color = self.palette().color(QPalette.WindowText)
-        self.setIcon(themed_icon(icon_name, color, self.iconSize().width()))
-        self.setToolTip(self._tooltip_on if checked else self._tooltip_off)
+        self.setIcon(themed_icon(self.ICON_FOR_MODE[self._mode], color, self.iconSize().width()))
+        self.setToolTip({
+            "none": "Click to mute, hold to mute (keep meter active)",
+            "short": "Muted -- click to unmute",
+            "long": "Muted (meter still active) -- click to unmute",
+        }[self._mode])
 
 
 # ----------------------------------------------------------------------
@@ -326,7 +367,7 @@ class ToggleIconButton(FlatIconButton):
 class SourceRow(QWidget):
     remove_clicked = pyqtSignal(str)   # emits the source name to remove
     gain_changed = pyqtSignal(str, float)     # name, gain (0.0 .. 2.0)
-    mute_changed = pyqtSignal(str, bool)      # name, muted
+    mute_changed = pyqtSignal(str, bool, bool)      # name, muted, full_mute
 
     def __init__(self, name, display_label, icon=None, parent=None):
         super().__init__(parent)
@@ -355,11 +396,8 @@ class SourceRow(QWidget):
         layout.addWidget(self.gain_value_label)
         self.gain_slider.valueChanged.connect(self._on_gain_changed)
 
-        self.mute_btn = ToggleIconButton(
-            "volume-high", "volume-disabled",
-            tooltip_off="Mute this source", tooltip_on="Unmute this source",
-        )
-        self.mute_btn.toggled.connect(lambda checked: self.mute_changed.emit(self.source_name, checked))
+        self.mute_btn = MuteButton()
+        self.mute_btn.mode_changed.connect(self._on_mute_mode_changed)
         layout.addWidget(self.mute_btn)
 
         # Small, fixed-size VU meter just for this one source.
@@ -378,6 +416,9 @@ class SourceRow(QWidget):
     def _on_gain_changed(self, percent):
         self.gain_value_label.setText(f"{percent}%")
         self.gain_changed.emit(self.source_name, percent / 100.0)
+
+    def _on_mute_mode_changed(self, mode):
+        self.mute_changed.emit(self.source_name, mode != "none", mode == "short")
 
 
 # ----------------------------------------------------------------------
@@ -1150,7 +1191,7 @@ class MainWindow(QMainWindow):
         row = SourceRow(name, name, icon=icon)
         row.remove_clicked.connect(self.remove_source)
         row.gain_changed.connect(lambda n, g: self.mixer.set_gain(n, g))
-        row.mute_changed.connect(lambda n, m: self.mixer.set_muted(n, m))
+        row.mute_changed.connect(lambda n, m, f: self.mixer.set_muted(n, m, f))
         self.source_rows[name] = row
         self.sources_layout.addWidget(row)
         self.no_sources_label.setVisible(False)
