@@ -515,21 +515,48 @@ def test_apply_linux_color_scheme_is_noop_on_non_linux(monkeypatch):
     assert calls == []
 
 
-def test_apply_linux_color_scheme_detects_dark_in_this_real_sandbox():
+def test_apply_linux_color_scheme_detects_dark_via_portal(monkeypatch):
     """
-    Not a simulated/mocked case -- this sandbox's session bus genuinely
-    has a working xdg-desktop-portal reporting "prefer dark" (verified
-    directly with a raw QDBusInterface.call: org.freedesktop.appearance /
-    color-scheme reads back as 1). That makes the *real* success path
-    exercisable here, not just the fallback -- so this asserts the dark
-    palette this function applies actually took effect, not just that
-    the function ran without raising.
+    Exercises the actual success path (a portal reporting "prefer dark")
+    via a mocked QDBusInterface/QDBusConnection, rather than relying on
+    whatever the real host's D-Bus session happens to report -- an
+    earlier version of this test asserted against the live sandbox's own
+    portal state directly, which was real during development but made the
+    test inherently non-portable: it failed the moment it ran on any
+    other machine/CI environment without that same portal configuration.
     """
+    from PyQt5 import QtDBus
     from PyQt5.QtGui import QPalette
     from PyQt5.QtWidgets import QApplication
 
     app = QApplication.instance()
+    monkeypatch.setattr(main.sys, "platform", "linux")
     original_palette = QPalette(app.palette())
+
+    class FakeBus:
+        def isConnected(self):
+            return True
+
+        def connect(self, *args, **kwargs):
+            return True
+
+    class FakeReply:
+        def arguments(self):
+            return [1]  # 1 == prefer dark
+
+    class FakeInterface:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def isValid(self):
+            return True
+
+        def call(self, *args, **kwargs):
+            return FakeReply()
+
+    monkeypatch.setattr(QtDBus.QDBusConnection, "sessionBus", staticmethod(lambda: FakeBus()))
+    monkeypatch.setattr(QtDBus, "QDBusInterface", FakeInterface)
+
     try:
         main.apply_linux_color_scheme(app)
         window_text = app.palette().color(QPalette.WindowText)

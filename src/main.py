@@ -2084,11 +2084,11 @@ def apply_linux_color_scheme(app):
     a malformed reply) leaves the app exactly as it behaves today -- a
     silent no-op, the same "optional feature degrades gracefully"
     convention already used for nvidia-ml-py/pyannote.audio elsewhere in
-    this app. Only that fallback path could actually be verified while
-    building this -- this sandbox has no xdg-desktop-portal service
-    running at all (confirmed via `busctl --user list`), so the success
-    path (an environment where the portal *is* running) needs confirming
-    on a real machine.
+    this app. Whether the portal is actually running varies by machine
+    (some Linux sandboxes/CI environments have no xdg-desktop-portal
+    service at all), so both the fallback and success paths are covered
+    with mocked D-Bus objects in tests/test_main.py rather than depending
+    on any particular host's real D-Bus state.
     """
     if not sys.platform.startswith("linux"):
         return
