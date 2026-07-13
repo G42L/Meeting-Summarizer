@@ -10,9 +10,9 @@ A beautiful native Linux desktop client for Ollama.
 
 <p align="center">
 
-![License](https://img.shields.io/github/license/glegigan/Transcriber-Summary)
-![Stars](https://img.shields.io/github/stars/glegigan/Transcriber-Summary)
-![Release](https://img.shields.io/github/v/release/glegigan/Transcriber-Summary)
+![License](https://img.shields.io/github/license/d42l/Transcriber-Summary)
+![Stars](https://img.shields.io/github/stars/d42l/Transcriber-Summary)
+![Release](https://img.shields.io/github/v/release/d42l/Transcriber-Summary)
 ![Qt5](https://img.shields.io/badge/Qt-5-green)
 ![Linux](https://img.shields.io/badge/Linux-supported-blue)
 ![Windows](https://img.shields.io/badge/Windows-supported-blue)
