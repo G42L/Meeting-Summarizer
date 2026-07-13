@@ -399,7 +399,7 @@ class MainWindow(QMainWindow):
         self.log_text.setReadOnly(True)
         self.log_text.setFont(QFont("monospace"))
         layout.addWidget(QLabel("Log / Summary Output:"))
-        layout.addWidget(self.log_text)
+        layout.addWidget(self.log_text, stretch=1)
 
         # Console is rendered as Markdown (Qt's built-in CommonMark-ish parser,
         # available since Qt 5.14). We keep the raw Markdown source ourselves

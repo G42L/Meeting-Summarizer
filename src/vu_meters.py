@@ -2099,7 +2099,7 @@ class LEDMatrixBarMeter(QWidget):
         rect = self.rect()
 
         # ---- Background ----
-        margin = 8
+        margin = 0
         bg_rect = rect.adjusted(margin, margin, -margin, -margin)
         painter.setPen(QPen(QColor(50, 50, 55), 1))
         painter.setBrush(QBrush(QColor(15, 15, 20)))
