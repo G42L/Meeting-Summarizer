@@ -35,6 +35,7 @@ Table of Contents
 3. [Audio Sources & the Mixer Engine](#Audio-Sources--the-Mixer-Engine)
 4. [System Requirements](#System-Requirements)
 5. [Installation](#Installation)
+5. [Create StandAlone Executable](#Create-Standalone-Executable)
 6. [Whisper Backend](#Whisper-Backend)
 7. [LLM Backend](#LLM-Backend)
 8. [Configuration](#Configuration)
@@ -168,7 +169,7 @@ This is the one part of the app that genuinely differs by operating system, beca
     ```
     This is the one capture path `miniaudio`'s Python bindings don't expose (see the [system-audio table](#capturing-system-audio-teams-etc-per-os) above). It's optional — the app runs fine without it if you only ever record your microphone, or if you're on macOS/Linux.
 
-4. Whisper Backend
+3. Whisper Backend
 You have two options – the GUI will let you choose which one to use.
 
 **Option A: faster‑whisper (Python)**
@@ -238,6 +239,181 @@ Once the LLM server is running, click the "Refresh" button next to the Backend d
 ✅ LM Studio detected at http://localhost:1234 (1 loaded model(s) of 4 downloaded)
 — vLLM not reachable at http://localhost:8000 (Connection refused)
 ```
+
+# Create Standalone Executable
+
+## Option 1: Single executable (recommended)
+
+1. Activate your virtual environment
+
+Windows
+```bash
+venv\Scripts\activate
+```
+
+Linux/macOS
+```bash
+source venv/bin/activate
+```
+
+2. Install PyInstaller
+```bash
+pip install pyinstaller
+```
+
+3. Build
+
+Simple console app
+```bash
+pyinstaller --onefile main.py
+```
+
+GUI application
+```bash
+pyinstaller --onefile --windowed main.py
+```
+
+With an icon
+```bash
+pyinstaller --onefile --windowed --icon=icon.ico main.py
+```
+
+After a few seconds you'll get
+
+```
+dist/
+    main.exe      <-- Windows executable
+
+build/
+main.spec
+```
+
+Only distribute the executable inside dist.
+
+> ***Note:***
+> Instead of putting everything in the root, I would recommend a project structure:
+> ```
+> MyApp/
+> │
+> ├── src/
+> │   └── myapp/
+> │       ├── __init__.py
+> │       ├── main.py
+> │       ├── gui.py
+> │       ├── audio.py
+> │       ├── utils.py
+> │       └── resources/
+> │
+> ├── assets/
+> ├── tests/
+> ├── requirements.txt
+> ├── pyproject.toml
+> ├── README.md
+> ├── LICENSE
+> └── .gitignore
+> ```
+> 
+> Then build using pyinstaller as above
+> ```bash
+> pyinstaller --onefile src/myapp/main.py
+> ```
+
+## Option 2: Bundle assets
+
+Use for project containing images, JSON files, models, etc.
+```
+assets/
+    logo.png
+    config.json
+```
+
+Build with
+
+* Windows
+```bash
+pyinstaller --onefile ^
+    --add-data "assets;assets" ^
+    main.py
+```
+* Linux/macOS
+```bash
+pyinstaller --onefile \
+    --add-data "assets:assets" \
+    main.py
+````
+
+Inside Python:
+
+```python
+import os
+import sys
+
+def resource_path(relative):
+    if getattr(sys, "frozen", False):
+        base = sys._MEIPASS
+    else:
+        base = os.path.abspath(".")
+
+    return os.path.join(base, relative)
+
+logo = resource_path("assets/logo.png")
+```
+
+## Option 4: Installable Python package
+
+If you want people to install it with pip, create a pyproject.toml.
+
+Example:
+```TOML
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "myapp"
+version = "1.0.0"
+description = "My awesome application"
+dependencies = [
+    "numpy",
+    "PyQt5"
+]
+
+[project.scripts]
+myapp = "myapp.main:main"
+```
+
+You can then install with
+```bash
+pip install .
+```
+
+or build wheels
+```bash
+python -m build
+```
+
+## Option 5: Nuitka
+For fairly large (especially with PyQt, AI, Whisper, Ollama, etc.) applications, Nuitka often produces faster executables than PyInstaller by compiling Python to C.
+
+Install:
+```bash
+pip install nuitka
+```
+
+Compile:
+```bash
+python -m nuitka \
+    --onefile \
+    --standalone \
+    --enable-plugin=pyqt5 \
+    main.py
+```
+
+Advantages:
+* Faster startup
+* Better performance
+* Harder to reverse engineer
+* Good support for PyQt
 
 # Configuration
 The application has no separate configuration file; all settings are selected through the GUI:
