@@ -1135,15 +1135,32 @@ class MainWindow(QMainWindow):
         # own BASE_STYLESHEET (self and the central widget) forces Qt to
         # fully rebuild its cached style-sheet render rules for every
         # descendant, rather than relying solely on each widget's own
-        # unpolish()/polish() below -- reported necessary on macOS, where
-        # QPushButton is bridged through the native Cocoa style and kept
-        # showing the old theme's colors even after a per-widget repolish
-        # (Linux's Fusion-style rendering didn't need this extra step, but
-        # it's a harmless no-op there).
+        # unpolish()/polish() below.
         central = self.centralWidget()
         for owner in (self, central):
             if owner is not None:
                 owner.setStyleSheet(owner.styleSheet())
+        # QPushButton's own text label isn't actually painted through the
+        # "color: palette(buttontext)" CSS rule above -- on macOS in
+        # particular, QMacStyle's native button-label painter reads
+        # buttonText() straight off the *widget's own* QPalette object
+        # (option->palette), not a live lookup against the QApplication's
+        # palette. Reassigning each button's palette from the just-changed
+        # app palette (rather than trusting Qt's normal inheritance
+        # cascade, which this bridged native rendering path apparently
+        # doesn't always respect) is what actually keeps text color in
+        # sync, alongside the background/border colors the repolish below
+        # already fixes. Scoped to QPushButton specifically -- unlike the
+        # generic unpolish()/polish() loop below, blanket-resetting every
+        # widget's palette this way would also stomp on the deliberate
+        # fixed (non-theme) colors some custom widgets set for themselves,
+        # e.g. WaveformDisplay's dark background in vu_meters.py.
+        app_palette = QApplication.instance().palette()
+        for button in self.findChildren(QPushButton):
+            try:
+                button.setPalette(app_palette)
+            except RuntimeError:
+                pass
         for widget in [self] + self.findChildren(QWidget):
             try:
                 widget.style().unpolish(widget)
