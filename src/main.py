@@ -32,8 +32,9 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox, QSystemTrayIcon, QMenu, QShortcut, QFrame,
     QGraphicsDropShadowEffect
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QSettings, QPropertyAnimation, QEasingCurve, QPoint
-from PyQt5.QtGui import QIcon, QFont, QKeySequence, QCursor
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QSettings, QPropertyAnimation, QEasingCurve, QPoint, QSize, QUrl
+from PyQt5.QtGui import QIcon, QFont, QKeySequence, QCursor, QPixmap, QPainter, QColor, QPalette, QTextDocument
+from PyQt5.QtSvg import QSvgRenderer
 
 from . import audio_engine
 from . import vu_meters
@@ -41,6 +42,165 @@ from . import whisper_engine
 from . import llm_backend
 from . import pipeline
 from . import sysmon
+
+ICONS_DIR = os.path.join(os.path.dirname(__file__), "icons", "ui")
+
+
+def themed_icon(name, color, size=18):
+    """
+    Loads icons/ui/{name}.svg and tints it with `color` (a QColor), so one
+    set of plain black-stroke SVGs can be recolored to match whatever the
+    current OS palette actually is -- QSvgRenderer doesn't resolve CSS
+    `currentColor`, so the SVGs are opaque black and the real color comes
+    from here instead, via a SourceIn composite (keeps the icon's alpha
+    shape, replaces every opaque pixel with `color`).
+    """
+    renderer = QSvgRenderer(os.path.join(ICONS_DIR, f"{name}.svg"))
+    pixmap = QPixmap(QSize(size, size))
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    renderer.render(painter)
+    painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+    painter.fillRect(pixmap.rect(), color)
+    painter.end()
+    return QIcon(pixmap)
+
+
+# Single palette-driven stylesheet for the whole window -- every color is a
+# palette(...) reference (the widget's actual current QPalette role), never
+# a hardcoded hex, so this automatically matches the OS's light/dark theme
+# and accent color instead of committing to one explicit look. `cls` is a
+# plain Qt dynamic property (set via _set_button_class), not a real CSS
+# class -- QSS supports selecting on arbitrary widget properties this way.
+# The one deliberate exception is [cls="danger"]: recording-in-progress is
+# conventionally red regardless of theme (like a hardware REC light), so
+# that one case only uses a fixed color instead of palette(highlight).
+BASE_STYLESHEET = """
+QPushButton {
+    background-color: palette(button);
+    color: palette(buttontext);
+    border: 1px solid palette(mid);
+    border-radius: 8px;
+    padding: 6px 14px;
+}
+QPushButton:hover {
+    background-color: palette(light);
+}
+QPushButton:pressed {
+    background-color: palette(dark);
+}
+QPushButton:disabled {
+    color: palette(mid);
+    border-color: palette(midlight);
+}
+QPushButton[cls="primary"] {
+    background-color: palette(highlight);
+    color: palette(highlightedtext);
+    border: 1px solid palette(highlight);
+    font-weight: 600;
+}
+QPushButton[cls="primary"]:hover {
+    background-color: palette(highlight);
+}
+QPushButton[cls="danger"] {
+    background-color: #e74c3c;
+    color: white;
+    border: 1px solid #c0392b;
+    font-weight: 600;
+}
+QPushButton[cls="danger"]:hover {
+    background-color: #c0392b;
+}
+
+QGroupBox {
+    border: 1px solid palette(mid);
+    border-radius: 8px;
+    margin-top: 14px;
+    padding-top: 10px;
+    font-weight: 600;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 4px;
+}
+
+QComboBox, QLineEdit, QPlainTextEdit {
+    border: 1px solid palette(mid);
+    border-radius: 6px;
+    padding: 4px 6px;
+}
+QComboBox:focus, QLineEdit:focus, QPlainTextEdit:focus {
+    border: 1px solid palette(highlight);
+}
+
+QListWidget {
+    border: 1px solid palette(mid);
+    border-radius: 6px;
+}
+QListWidget::item:selected {
+    background-color: palette(highlight);
+    color: palette(highlightedtext);
+}
+"""
+
+# Maps each status emoji used in append_log() calls (across main.py and the
+# log(...) callables in pipeline.py/llm_backend.py/whisper_engine.py/
+# diarization.py, all of which funnel into append_log) to one of the
+# bundled icons/ui/*.svg names. Emoji glyph rendering isn't guaranteed
+# correct across platforms/Qt versions/fonts -- verified in this very
+# environment, where Qt renders these as blank tofu boxes despite a color
+# emoji font being installed -- so append_log() substitutes each of these
+# for the same theme-tinted vector icon already used on buttons, via a
+# Markdown image reference resolved against a QTextDocument resource (see
+# MainWindow._register_log_icons()).
+LOG_ICONS = {
+    "✅": "check",
+    "❌": "x",
+    "⚠️": "alert-triangle",
+    "🛑": "alert-octagon",
+    "🎤": "mic",
+    "⏹": "stop-circle",
+    "📁": "folder",
+    "📂": "folder",
+    "⏳": "clock",
+    "📝": "edit-3",
+    "📊": "bar-chart-2",
+    "🤖": "cpu",
+    "🗣️": "users",
+    "🔄": "refresh-cw",
+    "📥": "inbox",
+    "🗑️": "trash-2",
+    "➖": "minus",
+    "➕": "plus",
+}
+
+# Semantic accent colors for the log icons above, echoing the color coding
+# the original emoji carried (green check, red x, amber warning, ...)
+# instead of the neutral text-color tint buttons use. Each was picked with
+# a fixed hex (not palette-driven, unlike themed_icon()'s normal use) and
+# verified to hold a WCAG contrast ratio >= 3:1 against both a white and a
+# #1e1e1e dark background, so they stay legible in either OS theme without
+# needing separate light/dark variants.
+LOG_ICON_COLORS = {
+    "check": "#1e8e3e",           # green -- success
+    "plus": "#1e8e3e",            # green -- added
+    "x": "#d93025",               # red -- error
+    "alert-octagon": "#d93025",   # red -- stopped/cancelled
+    "alert-triangle": "#b8860b",  # amber -- warning
+    "refresh-cw": "#1a73e8",      # blue -- in progress
+    "inbox": "#1a73e8",           # blue -- queued
+    "mic": "#1a73e8",             # blue -- active recording
+    "cpu": "#9350c4",             # purple -- LLM
+    "users": "#9350c4",           # purple -- speakers
+    "edit-3": "#0e8a7d",          # teal -- review
+    "bar-chart-2": "#0e8a7d",     # teal -- info/stats
+    "folder": "#b8730a",          # amber -- folder
+    "clock": "#757575",          # gray -- waiting
+    "stop-circle": "#757575",     # gray -- stopped (neutral, not an error)
+    "minus": "#757575",           # gray -- removed
+    "trash-2": "#757575",         # gray -- clear/delete (not alarming)
+}
 
 
 # ----------------------------------------------------------------------
@@ -53,12 +213,17 @@ class SourceRow(QWidget):
     gain_changed = pyqtSignal(str, float)     # name, gain (0.0 .. 2.0)
     mute_changed = pyqtSignal(str, bool)      # name, muted
 
-    def __init__(self, name, display_label, parent=None):
+    def __init__(self, name, display_label, icon=None, parent=None):
         super().__init__(parent)
         self.source_name = name
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 2, 4, 2)
+
+        if icon is not None:
+            icon_label = QLabel()
+            icon_label.setPixmap(icon.pixmap(16, 16))
+            layout.addWidget(icon_label)
 
         label = QLabel(display_label)
         label.setMinimumWidth(220)
@@ -87,7 +252,8 @@ class SourceRow(QWidget):
         self.vu.setMaximumWidth(140)
         layout.addWidget(self.vu)
 
-        remove_btn = QPushButton("✕")
+        remove_btn = QPushButton()
+        remove_btn.setIcon(themed_icon("x", self.palette().color(QPalette.WindowText)))
         remove_btn.setMaximumWidth(28)
         remove_btn.setToolTip("Remove this source")
         remove_btn.clicked.connect(lambda: self.remove_clicked.emit(self.source_name))
@@ -168,6 +334,7 @@ class TranscriptReviewDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Review Transcript")
         self.resize(700, 500)
+        self.setStyleSheet(BASE_STYLESHEET)
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Edit the transcript below if needed, then continue to summarization:"))
@@ -177,8 +344,12 @@ class TranscriptReviewDialog(QDialog):
         layout.addWidget(self.text_edit)
 
         buttons = QDialogButtonBox()
-        continue_btn = buttons.addButton("✅ Continue", QDialogButtonBox.AcceptRole)
-        cancel_btn = buttons.addButton("❌ Cancel Job", QDialogButtonBox.RejectRole)
+        continue_btn = buttons.addButton("Continue", QDialogButtonBox.AcceptRole)
+        cancel_btn = buttons.addButton("Cancel Job", QDialogButtonBox.RejectRole)
+        text_color = self.palette().color(QPalette.WindowText)
+        continue_btn.setIcon(themed_icon("check", text_color))
+        cancel_btn.setIcon(themed_icon("x", text_color))
+        continue_btn.setProperty("cls", "primary")
         continue_btn.clicked.connect(self.accept)
         cancel_btn.clicked.connect(self.reject)
         layout.addWidget(buttons)
@@ -227,15 +398,15 @@ class HistorySidebar(QWidget):
         # distinctly from the list's own "Open Folder" (which opens the
         # folder for whichever *specific* past session is selected below),
         # so the two aren't confused for one another.
-        self.open_output_folder_btn = QPushButton("📂 Open Outputs Folder")
+        self.open_output_folder_btn = QPushButton("Open Outputs Folder")
         content_layout.addWidget(self.open_output_folder_btn)
 
         content_layout.addWidget(QLabel("History (past sessions)"))
 
         btn_row = QHBoxLayout()
-        self.refresh_btn = QPushButton("🔄 Refresh")
+        self.refresh_btn = QPushButton("Refresh")
         btn_row.addWidget(self.refresh_btn)
-        self.open_folder_btn = QPushButton("📂 Open Folder")
+        self.open_folder_btn = QPushButton("Open Folder")
         btn_row.addWidget(self.open_folder_btn)
         content_layout.addLayout(btn_row)
 
@@ -250,9 +421,9 @@ class HistorySidebar(QWidget):
         handle.setFixedWidth(self.HANDLE_WIDTH)
         handle_layout = QVBoxLayout(handle)
         handle_layout.setContentsMargins(0, 8, 0, 0)
-        handle_label = QLabel("🕘")
-        handle_label.setAlignment(Qt.AlignHCenter)
-        handle_layout.addWidget(handle_label)
+        self.handle_label = QLabel()
+        self.handle_label.setAlignment(Qt.AlignHCenter)
+        handle_layout.addWidget(self.handle_label)
         handle_layout.addStretch()
         outer.addWidget(handle)
 
@@ -322,8 +493,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Meeting Transcriber")
         self.setMinimumSize(960, 925)
 
-        self.button_height = 30
-        self.button_radius = 8
+        self._icon_cache = {}
 
         # ---- Multi-source recording state ----
         self.mixer = audio_engine.AudioMixerEngine()
@@ -398,8 +568,7 @@ class MainWindow(QMainWindow):
             margins.left() + HistorySidebar.HANDLE_WIDTH, margins.top(), margins.right(), margins.bottom()
         )
 
-        action_btn_style = (f"height: {self.button_height}px; border-radius: {self.button_radius}px; padding: 8px; border: 1px solid #cccccc;")
-        refresh_btn_style = (f"border-radius: {self.button_radius}px; padding: 8px; border: 1px solid #cccccc;")
+        central.setStyleSheet(BASE_STYLESHEET)
 
         # ----- Audio Sources (multi-source picker + list of active sources) -----
         self.dev_group = QGroupBox("Audio Sources")
@@ -413,10 +582,10 @@ class MainWindow(QMainWindow):
             "(BlackHole on macOS, PulseAudio Monitor on Linux, WASAPI loopback on Windows)"
         )
         picker_row.addWidget(self.source_picker_combo, stretch=1)
-        add_source_btn = QPushButton("➕ Add")
+        add_source_btn = QPushButton(self._icon("plus"), "Add")
         add_source_btn.clicked.connect(self.add_selected_source)
         picker_row.addWidget(add_source_btn)
-        refresh_dev_btn = QPushButton("Refresh")
+        refresh_dev_btn = QPushButton(self._icon("refresh-cw"), "Refresh")
         refresh_dev_btn.clicked.connect(self.refresh_source_picker)
         picker_row.addWidget(refresh_dev_btn)
         dev_layout.addLayout(picker_row)
@@ -446,13 +615,14 @@ class MainWindow(QMainWindow):
         self.use_cli_check.setToolTip("If unchecked, uses faster-whisper (Python)")
         self.use_cli_check.toggled.connect(self.on_use_cli_toggled)
         whisper_layout.addWidget(self.use_cli_check)
-        refresh_whisper_btn = QPushButton("Refresh")
+        refresh_whisper_btn = QPushButton(self._icon("refresh-cw"), "Refresh")
         refresh_whisper_btn.clicked.connect(self.refresh_whisper_models)
         whisper_layout.addWidget(refresh_whisper_btn)
         whisper_group_layout.addLayout(whisper_layout)
 
         review_layout = QHBoxLayout()
-        self.review_transcript_check = QCheckBox("📝 Review transcript before summarizing")
+        self.review_transcript_check = QCheckBox("Review transcript before summarizing")
+        self.review_transcript_check.setIcon(self._icon("edit-3"))
         self.review_transcript_check.setToolTip(
             "Pause after transcription so you can read/edit the text before it's sent to the LLM"
         )
@@ -461,7 +631,8 @@ class MainWindow(QMainWindow):
         whisper_group_layout.addLayout(review_layout)
 
         diarization_layout = QHBoxLayout()
-        self.diarization_check = QCheckBox("🗣️ Label speakers (diarization)")
+        self.diarization_check = QCheckBox("Label speakers (diarization)")
+        self.diarization_check.setIcon(self._icon("users"))
         self.diarization_check.setToolTip(
             "Requires the faster-whisper backend (not whisper-cli), pyannote.audio installed, "
             "and a Hugging Face token with the gated 'pyannote/speaker-diarization-3.1' model's "
@@ -494,7 +665,7 @@ class MainWindow(QMainWindow):
         self.model_combo = QComboBox()
         self.model_combo.setToolTip("Models available on the selected backend")
         llm_layout.addWidget(self.model_combo)
-        refresh_backend_btn = QPushButton("Refresh")
+        refresh_backend_btn = QPushButton(self._icon("refresh-cw"), "Refresh")
         refresh_backend_btn.clicked.connect(self.refresh_backends)
         llm_layout.addWidget(refresh_backend_btn)
         self.llm_group.setLayout(llm_layout)
@@ -601,14 +772,13 @@ class MainWindow(QMainWindow):
 
         # ----- Record/Stop button + progress -----
         control_layout = QHBoxLayout()
-        self.record_btn = QPushButton("🎤 Record")
+        self.record_btn = QPushButton(self._icon("mic"), "Record")
         self.record_btn.clicked.connect(self.toggle_recording)
-        self.record_btn.setStyleSheet(f"font-size: 14px; {action_btn_style}")
+        self._set_button_class(self.record_btn, "primary")
         control_layout.addWidget(self.record_btn)
 
-        self.load_btn = QPushButton("📂 Load Audio")
+        self.load_btn = QPushButton(self._icon("upload"), "Load Audio")
         self.load_btn.clicked.connect(self.load_audio_file)
-        self.load_btn.setStyleSheet(action_btn_style)
         control_layout.addWidget(self.load_btn)
 
         self.progress_bar = QProgressBar()
@@ -616,15 +786,13 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         control_layout.addWidget(self.progress_bar)
 
-        self.cancel_btn = QPushButton("❌ Cancel")
+        self.cancel_btn = QPushButton(self._icon("x"), "Cancel")
         self.cancel_btn.clicked.connect(self.cancel_current_job)
         self.cancel_btn.setEnabled(False)
-        self.cancel_btn.setStyleSheet(action_btn_style)
         control_layout.addWidget(self.cancel_btn)
 
-        self.clear_log_btn = QPushButton("🗑️ Clear Log")
+        self.clear_log_btn = QPushButton(self._icon("trash-2"), "Clear Log")
         self.clear_log_btn.clicked.connect(self.clear_log)
-        self.clear_log_btn.setStyleSheet(action_btn_style)
         control_layout.addWidget(self.clear_log_btn)
 
         layout.addLayout(control_layout)
@@ -634,6 +802,7 @@ class MainWindow(QMainWindow):
         self.log_text.setFont(QFont("monospace"))
         layout.addWidget(QLabel("Log / Summary Output:"))
         layout.addWidget(self.log_text, stretch=1)
+        self._register_log_icons()
 
         # Console is rendered as Markdown (Qt's built-in CommonMark-ish parser,
         # available since Qt 5.14). We keep the raw Markdown source ourselves
@@ -654,10 +823,14 @@ class MainWindow(QMainWindow):
         # docstring. Built last so it raises above every widget already
         # added above.
         self.history_sidebar = HistorySidebar(central)
+        self.history_sidebar.open_output_folder_btn.setIcon(self._icon("folder"))
         self.history_sidebar.open_output_folder_btn.clicked.connect(self.open_folder)
+        self.history_sidebar.refresh_btn.setIcon(self._icon("refresh-cw"))
         self.history_sidebar.refresh_btn.clicked.connect(self.refresh_history)
+        self.history_sidebar.open_folder_btn.setIcon(self._icon("folder"))
         self.history_sidebar.open_folder_btn.clicked.connect(self.open_selected_history_folder)
         self.history_sidebar.list_widget.itemDoubleClicked.connect(self.open_history_summary)
+        self.history_sidebar.handle_label.setPixmap(self._icon("clock").pixmap(16, 16))
         self.history_sidebar.raise_()
 
     # ------------------------------------------------------------------
@@ -675,16 +848,19 @@ class MainWindow(QMainWindow):
         menu = QMenu()
         self.tray_show_action = menu.addAction("Show/Hide")
         self.tray_show_action.triggered.connect(self.toggle_window_visibility)
-        self.tray_record_action = menu.addAction("🎤 Record")
+        self.tray_record_action = menu.addAction(self._icon("mic"), "Record")
         self.tray_record_action.triggered.connect(self.toggle_recording)
         menu.addSeparator()
         quit_action = menu.addAction("Quit")
         quit_action.triggered.connect(self.close)
 
-        # Sync the label with self.record_btn ("🎤 Record"/"⏹ Stop") right
+        # Sync the label/icon with self.record_btn ("Record"/"Stop") right
         # before the menu opens, rather than updating it from every place
         # that changes record_btn's text.
-        menu.aboutToShow.connect(lambda: self.tray_record_action.setText(self.record_btn.text()))
+        def _sync_tray_record_action():
+            self.tray_record_action.setText(self.record_btn.text())
+            self.tray_record_action.setIcon(self.record_btn.icon())
+        menu.aboutToShow.connect(_sync_tray_record_action)
 
         self.tray_icon.setContextMenu(menu)
         self.tray_icon.activated.connect(self._on_tray_activated)
@@ -711,6 +887,54 @@ class MainWindow(QMainWindow):
         self.record_shortcut.setContext(Qt.ApplicationShortcut)
         self.record_shortcut.activated.connect(self.toggle_recording)
         self.record_btn.setToolTip("Start/stop recording (Ctrl+Alt+R)")
+
+    # ------------------------------------------------------------------
+    # Styling helpers
+    # ------------------------------------------------------------------
+    def _icon(self, name, size=18):
+        """themed_icon(), cached per (name, size, current text color) so
+        repeated calls (e.g. rebuilding the source picker) don't re-render
+        the same SVG over and over."""
+        color = self.palette().color(QPalette.WindowText)
+        key = (name, size, color.rgba())
+        if key not in self._icon_cache:
+            self._icon_cache[key] = themed_icon(name, color, size)
+        return self._icon_cache[key]
+
+    def _set_button_class(self, button, cls):
+        """
+        Sets the 'cls' dynamic property the stylesheet's
+        QPushButton[cls="..."] selectors key off (see BASE_STYLESHEET),
+        then forces Qt to re-evaluate the stylesheet for this widget --
+        changing a property alone doesn't trigger a repaint with the new
+        rule applied.
+        """
+        button.setProperty("cls", cls)
+        button.style().unpolish(button)
+        button.style().polish(button)
+
+    def _register_log_icons(self):
+        """
+        Registers every LOG_ICONS entry as a named image resource on the
+        log console's own QTextDocument, once. append_log() then embeds
+        `![i](icon-name)` Markdown image references (not raw HTML -- Qt's
+        setMarkdown() silently drops inline HTML, verified directly),
+        which setMarkdown() resolves against these resources on every
+        re-render. Resources persist across repeated setMarkdown() calls
+        on the same document, so this only needs to run once.
+
+        Unlike _icon()'s buttons (tinted with the palette's text color),
+        each of these gets its LOG_ICON_COLORS accent -- a fixed hex, not
+        palette-driven, since the whole point is restoring the semantic
+        color the original emoji carried. Verified contrast-safe against
+        both light and dark separately (see LOG_ICON_COLORS), so a fixed
+        color is fine here without needing a palette-based recompute.
+        """
+        document = self.log_text.document()
+        for icon_name in set(LOG_ICONS.values()):
+            color = QColor(LOG_ICON_COLORS[icon_name])
+            pixmap = themed_icon(icon_name, color, size=14).pixmap(14, 14)
+            document.addResource(QTextDocument.ImageResource, QUrl(icon_name), pixmap)
 
     def closeEvent(self, event):
         self._save_prompt_style_settings()
@@ -747,10 +971,10 @@ class MainWindow(QMainWindow):
         restore_index = None
         first_enabled_index = None
         for d in devices:
-            icon = "💻" if d["is_loopback"] else "🎤"
+            icon = self._icon("monitor" if d["is_loopback"] else "mic")
             already_added = d["name"] in self.mixer.sources
-            label = f"{icon} {d['name']}" + ("  (already added)" if already_added else "")
-            self.source_picker_combo.addItem(label, d)
+            label = d["name"] + ("  (already added)" if already_added else "")
+            self.source_picker_combo.addItem(icon, label, d)
             row = self.source_picker_combo.count() - 1
 
             if already_added:
@@ -804,8 +1028,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Could not add source", str(e))
             return
 
-        icon = "💻" if dev["is_loopback"] else "🎤"
-        row = SourceRow(name, f"{icon} {name}")
+        icon = self._icon("monitor" if dev["is_loopback"] else "mic")
+        row = SourceRow(name, name, icon=icon)
         row.remove_clicked.connect(self.remove_source)
         row.gain_changed.connect(lambda n, g: self.mixer.set_gain(n, g))
         row.mute_changed.connect(lambda n, m: self.mixer.set_muted(n, m))
@@ -835,7 +1059,7 @@ class MainWindow(QMainWindow):
     # Recording control
     # ------------------------------------------------------------------
     def toggle_recording(self):
-        if self.record_btn.text() == "🎤 Record":
+        if self.record_btn.text() == "Record":
             self.start_recording()
         else:
             self.stop_recording()
@@ -846,12 +1070,9 @@ class MainWindow(QMainWindow):
             return
 
         self.load_btn.setEnabled(False)
-        self.record_btn.setText("⏹ Stop")
-        self.record_btn.setStyleSheet(
-            f"background-color: #ff6b6b; font-weight: bold; font-size: 14px; "
-            f"height: {self.button_height}px; border-radius: {self.button_radius}px; padding: 8px; "
-            "border: 1px solid #cc0000;"
-        )
+        self.record_btn.setText("Stop")
+        self.record_btn.setIcon(self._icon("stop-circle"))
+        self._set_button_class(self.record_btn, "danger")
         self.progress_bar.setValue(0)
         self.append_log("🎤 Recording... (press Stop to finish)")
 
@@ -1370,8 +1591,17 @@ class MainWindow(QMainWindow):
     def append_log(self, text):
         """Add a diagnostic log line to the console. Markdown-special characters
         are escaped so paths/messages (e.g. 'a_b*c') don't get misread as
-        emphasis -- unlike append_summary, this text isn't meant to be Markdown."""
+        emphasis -- unlike append_summary, this text isn't meant to be Markdown.
+        Status emoji are then swapped for `![i](icon-name)` Markdown image
+        references (after escaping, so this injected syntax itself isn't
+        escaped) -- see LOG_ICONS/_register_log_icons for why."""
         escaped = re.sub(r'([\\`*_\[\]#])', r'\\\1', text)
+        for emoji, icon_name in LOG_ICONS.items():
+            if emoji in escaped:
+                # Alt text must be non-empty -- Qt's Markdown parser silently
+                # ignores `![](name)` (verified directly) and only resolves
+                # the image resource when there's alt text, e.g. `![i](name)`.
+                escaped = escaped.replace(emoji, f"![i]({icon_name})")
         if self._console_md:
             self._console_md += "\n\n"
         self._console_md += escaped
@@ -1396,20 +1626,28 @@ class MainWindow(QMainWindow):
     def _flush_console(self):
         scrollbar = self.log_text.verticalScrollBar()
         was_at_bottom = scrollbar.value() >= scrollbar.maximum() - 4
-        self.log_text.setMarkdown(self._console_md)
+        # Not self.log_text.setMarkdown(...) directly -- verified directly
+        # that Qt's Markdown parser produces the correct `<img src="...">`
+        # reference in the resulting document structure, but its inline-
+        # image *painting* path fails to resolve pre-registered
+        # QTextDocument.addResource() images for Markdown-sourced content
+        # specifically (confirmed with a minimal repro; the identical
+        # resource resolves fine via setHtml()). Parsing on a throwaway
+        # document and feeding the resulting HTML to the real widget's
+        # setHtml() sidesteps that bug while keeping Markdown formatting
+        # (bold/italic/etc., also confirmed) and the icon images intact.
+        parser = QTextDocument()
+        parser.setMarkdown(self._console_md)
+        self.log_text.setHtml(parser.toHtml())
         if was_at_bottom:
             scrollbar.setValue(scrollbar.maximum())
 
     def reset_ui(self):
         self.record_btn.setEnabled(True)
         self.load_btn.setEnabled(True)
-        self.record_btn.setText("🎤 Record")
-        action_btn_style = (
-            f"height: {self.button_height}px; border-radius: {self.button_radius}px; "
-            "padding: 8px; border: 1px solid #cccccc;"
-        )
-        self.record_btn.setStyleSheet(f"font-size: 14px; {action_btn_style}")
-        self.load_btn.setStyleSheet(action_btn_style)
+        self.record_btn.setText("Record")
+        self.record_btn.setIcon(self._icon("mic"))
+        self._set_button_class(self.record_btn, "primary")
 
         self.progress_bar.setValue(0)
 
@@ -1442,6 +1680,11 @@ class MainWindow(QMainWindow):
         self._console_md = ""
         self._console_last_was_summary = False
         self.log_text.clear()
+        # QTextEdit.clear() wipes the document's registered image resources
+        # too (verified directly), not just its text -- without this,
+        # every log icon would silently fall back to a broken-image
+        # placeholder for the rest of the session after one Clear Log click.
+        self._register_log_icons()
 
     # ---------- Summary Style (prompt templates) ----------
     def on_prompt_style_changed(self, style_name):
