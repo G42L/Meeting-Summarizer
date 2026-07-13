@@ -221,6 +221,15 @@ class HistorySidebar(QWidget):
         content.setFrameShape(QFrame.StyledPanel)
         content.setAutoFillBackground(True)
         content_layout = QVBoxLayout(content)
+
+        # Opens the general ./transcripts/ output root (or the most recent
+        # job's folder) -- placed above the "History" label and named
+        # distinctly from the list's own "Open Folder" (which opens the
+        # folder for whichever *specific* past session is selected below),
+        # so the two aren't confused for one another.
+        self.open_output_folder_btn = QPushButton("📂 Open Outputs Folder")
+        content_layout.addWidget(self.open_output_folder_btn)
+
         content_layout.addWidget(QLabel("History (past sessions)"))
 
         btn_row = QHBoxLayout()
@@ -638,17 +647,6 @@ class MainWindow(QMainWindow):
         self._console_render_timer.setInterval(200)
         self._console_render_timer.timeout.connect(self._flush_console)
 
-        save_layout = QHBoxLayout()
-        self.save_md_btn = QPushButton("💾 Save Markdown As...")
-        self.save_md_btn.clicked.connect(self.save_markdown)
-        self.save_md_btn.setStyleSheet(action_btn_style)
-        self.open_folder_btn = QPushButton("📂 Open Output Folder")
-        self.open_folder_btn.clicked.connect(self.open_folder)
-        self.open_folder_btn.setStyleSheet(action_btn_style)
-        save_layout.addWidget(self.save_md_btn)
-        save_layout.addWidget(self.open_folder_btn)
-        layout.addLayout(save_layout)
-
         self.last_md_path = None
 
         # ----- History (past sessions from ./transcripts/) -----
@@ -656,6 +654,7 @@ class MainWindow(QMainWindow):
         # docstring. Built last so it raises above every widget already
         # added above.
         self.history_sidebar = HistorySidebar(central)
+        self.history_sidebar.open_output_folder_btn.clicked.connect(self.open_folder)
         self.history_sidebar.refresh_btn.clicked.connect(self.refresh_history)
         self.history_sidebar.open_folder_btn.clicked.connect(self.open_selected_history_folder)
         self.history_sidebar.list_widget.itemDoubleClicked.connect(self.open_history_summary)
@@ -1421,18 +1420,6 @@ class MainWindow(QMainWindow):
         # live source monitoring now that loaded_samples is back to None.
 
     # ---------- Save / Open ----------
-    def save_markdown(self):
-        if not self.last_md_path or not os.path.exists(self.last_md_path):
-            QMessageBox.information(self, "No file", "No Markdown file has been generated yet.")
-            return
-        save_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Markdown As", self.last_md_path, "Markdown files (*.md)"
-        )
-        if save_path:
-            import shutil
-            shutil.copy2(self.last_md_path, save_path)
-            self.append_log(f"📁 Saved copy to: {save_path}")
-
     def open_folder(self):
         if self.last_md_path and os.path.exists(self.last_md_path):
             folder = os.path.dirname(self.last_md_path)
