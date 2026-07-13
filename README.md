@@ -33,21 +33,27 @@ Table of Contents
 1. [Features](#Features)
 2. [Project Structure](#Project-Structure)
 3. [Audio Sources & the Mixer Engine](#Audio-Sources--the-Mixer-Engine)
-4. [System Requirements](#System-Requirements)
-5. [Installation](#Installation)
-5. [Create StandAlone Executable](#Create-Standalone-Executable)
-6. [Whisper Backend](#Whisper-Backend)
-7. [LLM Backend](#LLM-Backend)
-8. [Configuration](#Configuration)
-9. [Usage](#Usage)
-10. [Recording](#Recording)
-11. [Loading an Existing Audio File](#Loading-an-Existing-Audio-File)
-12. [Selecting Models](#Selecting-Models)
-13. [Processing](#Processing)
-14. [Viewing Output](#Viewing-Output)
-15. [File Output Structure](#FileOutput-Structure)
-16. [Troubleshooting](#Troubleshooting)
-17. [License](#License)
+4. [Mute Button: Short Click vs. Long Press](#Mute-Button-Short-Click-vs-Long-Press)
+5. [System Requirements](#System-Requirements)
+6. [Installation](#Installation)
+7. [Create StandAlone Executable](#Create-Standalone-Executable)
+8. [Whisper Backend](#Whisper-Backend)
+9. [LLM Backend](#LLM-Backend)
+10. [Summary Style & Custom Prompts](#Summary-Style--Custom-Prompts)
+11. [Transcript Review](#Transcript-Review)
+12. [Speaker Diarization](#Speaker-Diarization)
+13. [History (Past Sessions)](#History-Past-Sessions)
+14. [System Tray & Keyboard Shortcut](#System-Tray--Keyboard-Shortcut)
+15. [Configuration](#Configuration)
+16. [Usage](#Usage)
+17. [Recording](#Recording)
+18. [Loading an Existing Audio File](#Loading-an-Existing-Audio-File)
+19. [Selecting Models](#Selecting-Models)
+20. [Processing](#Processing)
+21. [Viewing Output](#Viewing-Output)
+22. [File Output Structure](#FileOutput-Structure)
+23. [Troubleshooting](#Troubleshooting)
+24. [License](#License)
 
 # Features
 * 🎛️ **Multi-source Audio Mixer Engine** – record your microphone and system/Teams audio (loopback) at the same time, mixed live into one stream. Add as many sources as you like; each gets its own gain slider, mute button, and VU meter.
@@ -66,23 +72,37 @@ Table of Contents
 * 🔍 **Backend detection diagnostics** – hit Refresh next to the LLM Backend dropdown and the log tells you exactly which servers were found and why any weren't (wrong port, server not started, etc.) instead of a silent empty dropdown.
 * 📝 Streaming summary displayed in real time as the LLM generates it.
 * 📁 Organised output: every job creates a separate folder with the audio, transcript, and a Markdown summary.
-* 💾 Save/export the summary Markdown file.
-* 📂 Open output folder with one click.
 * 🔄 Job queue – process multiple audio files sequentially without blocking the UI.
+* 🔇 **Two-tier mute button** – short click fully mutes a source (excluded from the mix *and* its own VU meter goes silent); press-and-hold instead mutes it from the mix while keeping that source's VU meter live, so you can keep an eye on a source without it being picked up. See [Mute Button: Short Click vs. Long Press](#Mute-Button-Short-Click-vs-Long-Press).
+* 📝 **Summary Style presets** – pick "Standard Minutes", "Action Items Only", "Executive Digest", or write your own custom prompt (persisted across restarts). See [Summary Style & Custom Prompts](#Summary-Style--Custom-Prompts).
+* ✏️ **Transcript review** – optionally pause after transcription to read/edit the text before it's sent to the LLM. See [Transcript Review](#Transcript-Review).
+* 🗣️ **Speaker diarization** *(optional)* – label who's speaking in the transcript, even when multiple people share one microphone, via `pyannote.audio`. See [Speaker Diarization](#Speaker-Diarization).
+* 🕘 **History sidebar** – a collapsible, hover-to-open panel listing past sessions from `./transcripts/`, with a one-click jump to any session's summary or folder. See [History (Past Sessions)](#History-Past-Sessions).
+* 🖥️ **System tray + keyboard shortcut** – a tray icon for quick Record/Stop access and `Ctrl+Alt+R` to toggle recording from anywhere in the app. See [System Tray & Keyboard Shortcut](#System-Tray--Keyboard-Shortcut).
+* 🎨 Modern, theme-aware UI – flat rounded controls and a bundled vector icon set (light/dark palette-tinted automatically, so it matches your OS theme) instead of relying on emoji-font rendering, which isn't guaranteed consistent across platforms.
 
 # Project Structure
 The app is split into focused modules instead of one large file:
 
 ```text
-main.py                   MainWindow, all UI wiring, application entry point
+src/
+├── main.py               MainWindow, all UI wiring, application entry point
 ├── audio_engine.py       Multi-source capture + live mixing (AudioSource, AudioMixerEngine)
 ├── vu_meters.py          Waveform display + 14 VU-meter visual styles
 ├── whisper_engine.py     Model catalogue, download, offline-first transcription
 ├── llm_backend.py        Ollama / vLLM / LM Studio / llama.cpp detection + summarization
-└── pipeline.py           Job queue: Job, ProcessingWorker, QueueWorker
+├── diarization.py        Optional speaker diarization (pyannote.audio) + transcript labeling
+├── pipeline.py           Job queue: Job, ProcessingWorker, QueueWorker
+├── sysmon.py             CPU/RAM/GPU stats for the System panel
+└── icons/ui/             Bundled SVG icon set used throughout the UI
 ```
 
-Each file can be read (and modified) on its own — `audio_engine.py` doesn't know anything about Qt widgets, `vu_meters.py` doesn't know anything about audio capture, etc.
+Each file can be read (and modified) on its own — `audio_engine.py` doesn't know anything about Qt widgets, `vu_meters.py` doesn't know anything about audio capture, etc. Only `main.py` (and `vu_meters.py`, for the widgets it defines) import PyQt5; every other module is plain, Qt-agnostic Python.
+
+Run the app as a module so its internal relative imports resolve correctly:
+```bash
+python -m src.main
+```
 
 # Audio Sources & the Mixer Engine
 
@@ -104,17 +124,28 @@ Sources are mixed independently of how fast each device's driver delivers audio 
 ## The Audio Sources panel
 ```text
 ┌─ Audio Sources ───────────────────────────────────────────────────────────┐
-│ Add source: [ 💻 Stereo Mix (loopback)            ▾ ]  [➕ Add] [Refresh] │
+│ Add source: [ 🖥 Monitor of HDA NVidia (loopback)  ▾ ]  [+ Add] [Refresh] │
 │             (already-added devices appear greyed out and unselectable)    │
 │                                                                           │
-│  🎤 Realtek Mic        Gain [───●───────] 100%   ☐ Mute   █ █ ░░   [✕]    │
-│  💻 Teams (loopback)   Gain [──────●────] 130%   ☐ Mute   █ ░░░░   [✕]    │
+│  🎤 Realtek Mic        Gain [───●───────] 100%   🔊   █ █ ░░   ⊗          │
+│  🖥 Teams (loopback)   Gain [──────●────] 130%   🔊   █ ░░░░   ⊗          │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 * **Add source** lists every microphone plus every detected system-audio device; picking one and clicking **Add** starts it immediately as its own row.
-* Each row has an independent **gain** slider (0–200%), a **mute** checkbox, a small live VU meter, and a remove (✕) button.
+* Each row has an independent **gain** slider (0–200%), a **mute button** (see [Mute Button: Short Click vs. Long Press](#Mute-Button-Short-Click-vs-Long-Press) below), a small live VU meter, and a small remove button that turns red on hover.
 * A device already in the mix is greyed out in the picker so it can't be added twice; removing it makes it selectable again.
 * The waveform and VU meter at the top of the window always reflect the **combined, mixed** output — what actually gets saved and transcribed.
+
+# Mute Button: Short Click vs. Long Press
+Each source's mute control is a single icon button with two distinct gestures, since a normal mute checkbox can't tell "quickly silence this" apart from "keep monitoring it, just don't record it":
+
+| Gesture | Icon | Effect |
+|---|---|---|
+| *(default)* | 🔴 red mic | Live — included in the mix, VU meter active. |
+| **Short click** | 🟢 green muted-speaker | Fully muted — excluded from the mix **and** that source's own VU meter goes silent. Use this when you genuinely don't want to see or hear it. |
+| **Press and hold** (~0.5s) | 🟠 orange disabled-speaker | Muted from the mix only — the VU meter keeps showing real activity, so you can keep monitoring a source (e.g. to check it's still picking up sound) without it being recorded. |
+
+Clicking again from either muted state returns to live; a short click while long-press-muted un-mutes first (a second short click is needed to reach full mute from there), while a long-press while short-muted switches straight to long-mute in one gesture. The colors are deliberately inverted from the usual red-is-bad convention: red flags a **hot, recording-ready mic**, and green means it's **safe to talk freely** without being picked up.
 
 ## Capturing system audio (Teams, etc.) per OS
 This is the one part of the app that genuinely differs by operating system, because "record what's coming out of the speakers" isn't a single cross-platform API:
@@ -168,6 +199,12 @@ This is the one part of the app that genuinely differs by operating system, beca
     pip install sounddevice
     ```
     This is the one capture path `miniaudio`'s Python bindings don't expose (see the [system-audio table](#capturing-system-audio-teams-etc-per-os) above). It's optional — the app runs fine without it if you only ever record your microphone, or if you're on macOS/Linux.
+
+    **Only if you want speaker diarization** (the "Label speakers" checkbox — see [Speaker Diarization](#Speaker-Diarization)), also install:
+    ```bash
+    pip install pyannote.audio
+    ```
+    This pulls in `torch`/`torchaudio` and is a much larger install than everything else here. It's fully optional — the checkbox is simply unavailable (and the app degrades gracefully, logging a clear message) if this isn't installed.
 
 3. Whisper Backend
 You have two options – the GUI will let you choose which one to use.
@@ -239,6 +276,39 @@ Once the LLM server is running, click the "Refresh" button next to the Backend d
 ✅ LM Studio detected at http://localhost:1234 (1 loaded model(s) of 4 downloaded)
 — vLLM not reachable at http://localhost:8000 (Connection refused)
 ```
+
+# Summary Style & Custom Prompts
+Right below the LLM Backend/Model row, a **Style** dropdown controls the prompt sent to the LLM:
+
+* **Standard Minutes** – a general summary with key points, decisions, and action items (the default).
+* **Action Items Only** – just a bullet list of action items and owners, no other summary text.
+* **Executive Digest** – a single concise paragraph covering only the most important decision or outcome.
+* **Custom...** – reveals a text box where you write your own prompt. It must include the literal placeholder `{transcript}` where the transcript should be inserted.
+
+The selected style (and your custom prompt text, if any) is remembered across restarts.
+
+# Transcript Review
+Checking **"Review transcript before summarizing"** (in the Whisper Model section) pauses each job right after transcription: a dialog opens with the transcript in an editable text box, letting you fix any misheard words or names before it's sent to the LLM. Click **Continue** to proceed with the (possibly edited) text, or **Cancel Job** to abort. Off by default — every job runs fully automatically unless you turn this on.
+
+# Speaker Diarization
+Checking **"Label speakers (diarization)"** tags each line of the transcript by who's speaking (`**SPEAKER_00:** ...`), even when multiple people share one microphone. This is an optional, heavier feature with a few real requirements:
+
+* **faster‑whisper only** – whisper‑cli's plain-text output has no per-segment timestamps to align speakers against, so this checkbox is greyed out (and unchecked) whenever "Use whisper‑cli" is enabled, and vice versa.
+* Requires the `pyannote.audio` package (not installed by default — see [Installation](#Installation)), which in turn pulls in `torch`. If it isn't installed, the app logs a clear message and falls back to the plain transcript instead of failing the job.
+* Requires a free [Hugging Face](https://huggingface.co) account, an access token, and having accepted the terms for the gated `pyannote/speaker-diarization-3.1` model on huggingface.co. Paste the token into the **HF Token** field next to the checkbox — it's remembered across restarts.
+* The very first run downloads the diarization model (one-time network access, same shape as a Whisper model's first download); after that it runs fully offline.
+
+# History (Past Sessions)
+A thin handle sits permanently at the left edge of the window — hover over it to slide out a panel listing every past session from `./transcripts/`, newest first, each with a short preview of its summary. It collapses automatically when you move the mouse away, so it never takes up space you're not using it.
+
+* **Refresh** – re-scans `./transcripts/` (also happens automatically whenever a job finishes).
+* **Open Folder** – opens the folder for whichever session is selected in the list.
+* Double-click a session to open its `summary.md` directly.
+* **Open Outputs Folder** (above the list) opens the general `./transcripts/` root — for a *specific* past session's folder, use the list's own **Open Folder** button instead.
+
+# System Tray & Keyboard Shortcut
+* A system tray icon (where supported by the OS/desktop environment) gives quick access to Show/Hide the window, Record/Stop, and Quit, without needing to bring the main window to the front.
+* `Ctrl+Alt+R` toggles recording from anywhere in the app, regardless of which widget currently has focus. This is an in-app shortcut, not a true OS-wide global hotkey — it only fires while the app itself is focused (a real global hotkey would need a new cross-platform dependency, and doesn't work reliably under Wayland anyway).
 
 # Create Standalone Executable
 
@@ -423,31 +493,30 @@ The application has no separate configuration file; all settings are selected th
     * If a model is not downloaded, clicking on it will prompt you to download it (requires whisper.cpp download script).
 * LLM Backend: select the detected server and choose a model from its list (only loaded models are selectable for LM Studio).
 * Use whisper‑cli: toggle between the two Whisper backends.
-
-All choices are remembered per session but reset when the application is closed.
+* Summary Style and the Hugging Face token (for diarization) are **persisted across restarts**; everything else resets to its default each time the application starts.
 
 # Usage
-Launch the application:
+Launch the application as a module (its internal imports rely on this, rather than running `src/main.py` as a standalone script):
 
 ```bash
 source venv/bin/activate
-python main.py
+python -m src.main
 ```
 
 # GUI Overview
 
-1. **Audio Sources** – add one or more microphones and/or system-audio devices; each row has gain, mute, and its own VU meter.
-2. Whisper Model – choose the model and toggle whisper‑cli mode.
-3. LLM Backend – select your running backend and its model.
+1. **Audio Sources** – add one or more microphones and/or system-audio devices; each row has gain, a mute button (short click vs. long press — see [above](#Mute-Button-Short-Click-vs-Long-Press)), and its own VU meter.
+2. Whisper Model – choose the model, toggle whisper‑cli mode, and optionally enable transcript review / speaker diarization.
+3. LLM Backend – select your running backend/model, and the Summary Style prompt to use.
 4. Audio Monitor – shows the live **mixed** waveform and VU meter during recording.
 5. Control Buttons:
-    * 🎤 Record – start/stop recording.
-    * 📂 Load Audio – load an existing audio file for processing.
-    * ❌ Cancel - cancel job currently being processed
-    * 🗑️ Clear Log – clear the log/summary display.
+    * Record – start/stop recording (also bound to `Ctrl+Alt+R`).
+    * Load Audio – load an existing audio file for processing.
+    * Cancel – cancel the job currently being processed.
+    * Clear Log – clear the log/summary display.
 6. Progress Bar – shows overall job progress.
-7. 📄 Log / Summary Output – displays logs (including backend-detection diagnostics) and streams the generated summary.
-8. 💾 Save / Open – save the Markdown summary or open the output folder.
+7. Log / Summary Output – displays logs (including backend-detection diagnostics) and streams the generated summary.
+8. **History sidebar** – hover the handle at the left edge to browse past sessions (see [History (Past Sessions)](#History-Past-Sessions)).
 
 # Recording
 1. In **Audio Sources**, pick a device from the dropdown and click **➕ Add** — repeat for every source you want in the mix (e.g. your microphone, then a loopback/system-audio device for Teams).
@@ -475,9 +544,9 @@ python main.py
 * Once finished, a Markdown file is saved in a new timestamped folder.
 
 ## Viewing Output
-* The summary is displayed in the log area.
-* You can click 💾 Save Markdown As… to save a copy elsewhere.
-* Click 📂 Open Output Folder to open the folder containing all files for the last processed job.
+* The summary is displayed in the log area as it streams in, and stays there afterward alongside the rest of the log.
+* Open the [History sidebar](#History-Past-Sessions) (hover the handle at the left edge) to browse any past session: double-click one to open its `summary.md`, or use its **Open Folder** button for that specific session's folder.
+* The sidebar's **Open Outputs Folder** button opens the general `./transcripts/` root instead of any one session.
 
 # File Output Structure
 Every job creates a dedicated folder under `./transcripts/` named with the current date and time (e.g., `2026-06-18 14.30.45`). The folder contains:
@@ -516,7 +585,7 @@ The summary.md includes:
 | Memory errors during transcription/summarisation | Use smaller models (e.g., `tiny`, `base`) or lower‑memory LLM models. |
 | Audio file not loading for visualisation | Only WAV, MP3, M4A, FLAC, OGG, AAC are supported via `soundfile` and `ffmpeg`. Install `ffmpeg` if necessary. |
 | Job queue gets stuck | Restart the application. The queue is cleared on exit. |
-| Console shows `QSocketNotifier: Can only be used with threads started with QThread` or `qt.qpa.wayland: Wayland does not support QWindow::requestActivate()` | Both are harmless, cosmetic Qt/Linux messages (input-method integration and a Wayland focus restriction, respectively) — not application bugs. Safe to ignore; can be silenced with `QT_LOGGING_RULES="qt.qpa.wayland=false" python main.py` if the noise bothers you. |
+| Console shows `QSocketNotifier: Can only be used with threads started with QThread` or `qt.qpa.wayland: Wayland does not support QWindow::requestActivate()` | Both are harmless, cosmetic Qt/Linux messages (input-method integration and a Wayland focus restriction, respectively) — not application bugs. Safe to ignore; can be silenced with `QT_LOGGING_RULES="qt.qpa.wayland=false" python -m src.main` if the noise bothers you. |
 
 For further help, please open an issue on the project repository.
 
