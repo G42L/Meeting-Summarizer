@@ -129,11 +129,20 @@ def detect_backends(log=None):
     return backends
 
 
-def summarize(transcript, backend_info, llm_model, on_chunk, log):
+# (connect_timeout, read_timeout) for streaming requests. read_timeout is
+# the max gap allowed between bytes from the server, not a cap on total
+# response time -- a local LLM streaming tokens normally should never hit
+# it; a backend that accepted the connection but then hangs will.
+_STREAM_TIMEOUT = (5, 60)
+
+
+def summarize(transcript, backend_info, llm_model, on_chunk, log, queue_worker=None):
     """
     Stream a summary out of the given backend. `on_chunk(str)` is called
     for every incremental piece of text as it arrives (for live display).
     Returns the full summary string, or None on failure.
+    `queue_worker`, if given, is polled for `.stop_current` so a job can be
+    cancelled mid-stream, not just before it starts.
     """
     prompt = (
         "Summarize the following meeting transcript. "
@@ -144,23 +153,30 @@ def summarize(transcript, backend_info, llm_model, on_chunk, log):
     api_type = backend_info["api_type"]
 
     if api_type == "ollama":
-        return _summarize_ollama(prompt, backend_url, llm_model, on_chunk, log)
+        return _summarize_ollama(prompt, backend_url, llm_model, on_chunk, log, queue_worker)
     elif api_type == "openai":
-        return _summarize_openai(prompt, backend_url, llm_model, on_chunk, log)
+        return _summarize_openai(prompt, backend_url, llm_model, on_chunk, log, queue_worker)
     else:
         log(f"Unknown API type: {api_type}")
         return None
 
 
-def _summarize_ollama(prompt, backend_url, model, on_chunk, log):
+def _cancelled(queue_worker):
+    return queue_worker is not None and getattr(queue_worker, "stop_current", False)
+
+
+def _summarize_ollama(prompt, backend_url, model, on_chunk, log, queue_worker=None):
     payload = {"model": model, "prompt": prompt, "stream": True}
     try:
-        with requests.post(f"{backend_url}/api/generate", json=payload, stream=True) as r:
+        with requests.post(f"{backend_url}/api/generate", json=payload, stream=True, timeout=_STREAM_TIMEOUT) as r:
             if r.status_code != 200:
                 log(f"Ollama error: {r.status_code} {r.text}")
                 return None
             summary = ""
             for line in r.iter_lines():
+                if _cancelled(queue_worker):
+                    log("🛑 Cancelled during summarization.")
+                    return None
                 if line:
                     data = json.loads(line.decode())
                     if "response" in data:
@@ -168,12 +184,15 @@ def _summarize_ollama(prompt, backend_url, model, on_chunk, log):
                         summary += chunk
                         on_chunk(chunk)
             return summary
+    except requests.exceptions.Timeout:
+        log(f"Ollama error: no response from server for {_STREAM_TIMEOUT[1]}s -- it may be hung.")
+        return None
     except Exception as e:
         log(f"Ollama error: {e}")
         return None
 
 
-def _summarize_openai(prompt, backend_url, model, on_chunk, log):
+def _summarize_openai(prompt, backend_url, model, on_chunk, log, queue_worker=None):
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
@@ -181,12 +200,15 @@ def _summarize_openai(prompt, backend_url, model, on_chunk, log):
     }
     headers = {"Content-Type": "application/json"}
     try:
-        with requests.post(f"{backend_url}/v1/chat/completions", json=payload, headers=headers, stream=True) as r:
+        with requests.post(f"{backend_url}/v1/chat/completions", json=payload, headers=headers, stream=True, timeout=_STREAM_TIMEOUT) as r:
             if r.status_code != 200:
                 log(f"API error: {r.status_code} {r.text}")
                 return None
             summary = ""
             for line in r.iter_lines():
+                if _cancelled(queue_worker):
+                    log("🛑 Cancelled during summarization.")
+                    return None
                 if not line:
                     continue
                 line_str = line.decode()
@@ -202,6 +224,9 @@ def _summarize_openai(prompt, backend_url, model, on_chunk, log):
                 except json.JSONDecodeError:
                     pass
             return summary
+    except requests.exceptions.Timeout:
+        log(f"API error: no response from server for {_STREAM_TIMEOUT[1]}s -- it may be hung.")
+        return None
     except Exception as e:
         log(f"OpenAI error: {e}")
         return None

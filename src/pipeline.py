@@ -20,6 +20,22 @@ from . import whisper_engine
 from . import llm_backend
 
 
+def new_output_dir():
+    """
+    Create and return a fresh timestamped folder under ./transcripts/, e.g.
+    ./transcripts/2026-07-12 14.30.00/. Shared by both the record-a-new-
+    meeting path (MainWindow.stop_recording) and the load-existing-file
+    path (ProcessingWorker.process, when the caller didn't pre-assign an
+    output_dir) so the two don't drift out of sync with each other.
+    """
+    base_dir = Path.cwd() / "transcripts"
+    base_dir.mkdir(exist_ok=True)
+    folder_name = datetime.now().strftime("%Y-%m-%d %H.%M.%S")
+    output_dir = base_dir / folder_name
+    output_dir.mkdir(exist_ok=True)
+    return output_dir
+
+
 class Job:
     """A single transcription job."""
     _counter = 0
@@ -48,11 +64,7 @@ class ProcessingWorker(QObject):
             self.output_dir = Path(job.output_dir)
             self.output_dir.mkdir(parents=True, exist_ok=True)
         else:
-            base_dir = Path.cwd() / "transcripts"
-            base_dir.mkdir(exist_ok=True)
-            folder_name = datetime.now().strftime("%Y-%m-%d %H.%M.%S")
-            self.output_dir = base_dir / folder_name
-            self.output_dir.mkdir(exist_ok=True)
+            self.output_dir = new_output_dir()
         self.log.emit(f"📁 Output folder: {self.output_dir}")
 
         if queue_worker.stop_current:
@@ -84,6 +96,7 @@ class ProcessingWorker(QObject):
             summary = llm_backend.summarize(
                 transcript, job.backend_info, job.llm_model,
                 on_chunk=self.summary_chunk.emit, log=self.log.emit,
+                queue_worker=queue_worker,
             )
             if summary is None:
                 self.error.emit("Summarization failed.")

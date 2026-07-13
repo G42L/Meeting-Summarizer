@@ -14,6 +14,7 @@ invisible until it silently isn't.
 """
 
 import subprocess
+import time
 from pathlib import Path
 
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
@@ -129,12 +130,14 @@ def get_whisper_models_info():
 def download_whisper_model(model_name):
     """
     Downloads the ggml model using the whisper.cpp download script.
-    Returns True on success, False on failure.
+    Returns (success, error_message) -- error_message is None on success,
+    and a human-readable reason (network error, disk full, bad model name,
+    ...) on failure, instead of just a bare bool that throws the reason away.
     """
     whisper_cpp_dir = Path.home() / "whisper.cpp"
     script = whisper_cpp_dir / "models" / "download-ggml-model.sh"
     if not script.exists():
-        return False
+        return False, f"download-ggml-model.sh not found at {script}"
     try:
         subprocess.run(
             ["bash", str(script), model_name],
@@ -143,9 +146,16 @@ def download_whisper_model(model_name):
             capture_output=True,
             text=True,
         )
-        return True
-    except subprocess.CalledProcessError:
-        return False
+        return True, None
+    except subprocess.CalledProcessError as e:
+        # download-ggml-model.sh writes its actual error (bad model name,
+        # curl/network failure, disk full, ...) to stdout/stderr; stderr is
+        # usually where curl reports failures, but the script itself often
+        # prints to stdout, so surface whichever one has content.
+        detail = (e.stderr or e.stdout or "").strip()
+        return False, detail or f"exit code {e.returncode}"
+    except OSError as e:
+        return False, str(e)
 
 
 # ----------------------------------------------------------------------
@@ -217,8 +227,9 @@ def transcribe_cli(audio_file, whisper_model, output_dir, log, queue_worker=None
     model_path = get_whisper_model_path(whisper_model)
     if not model_path:
         log(f"Model '{whisper_model}' not found. Attempting to download...")
-        if not download_whisper_model(whisper_model):
-            log(f"Failed to download model '{whisper_model}'. Please download manually.")
+        success, error = download_whisper_model(whisper_model)
+        if not success:
+            log(f"❌ Failed to download model '{whisper_model}': {error}")
             return None
         model_path = get_whisper_model_path(whisper_model)
         if not model_path:
@@ -238,17 +249,35 @@ def transcribe_cli(audio_file, whisper_model, output_dir, log, queue_worker=None
     output_base = str(Path(output_dir) / "meeting")
     cmd = [str(whisper_cli), "-m", model_path, "-f", audio_file, "-otxt", "-of", output_base]
 
+    # No fixed wall-clock timeout here -- a real meeting recording can take
+    # whisper-cli well over 5 minutes to transcribe on CPU, especially with
+    # larger models, and a hard cap was killing perfectly healthy long
+    # transcriptions. Instead we poll so Cancel can still interrupt it.
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=300)
-        transcript_file = Path(output_dir) / "meeting.txt"
-        with open(transcript_file, "r") as f:
-            return f.read()
-    except subprocess.TimeoutExpired:
-        log("❌ whisper-cli timed out after 5 minutes.")
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    except OSError as e:
+        log(f"❌ Failed to start whisper-cli: {e}")
         return None
-    except subprocess.CalledProcessError as e:
-        log(f"❌ whisper-cli error: {e.stderr}")
+
+    while proc.poll() is None:
+        if queue_worker is not None and getattr(queue_worker, "stop_current", False):
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            log("🛑 Cancelled during transcription.")
+            return None
+        time.sleep(0.5)
+
+    _, stderr = proc.communicate()
+    if proc.returncode != 0:
+        log(f"❌ whisper-cli error: {stderr}")
         return None
+
+    transcript_file = Path(output_dir) / "meeting.txt"
+    with open(transcript_file, "r") as f:
+        return f.read()
 
 
 def transcribe(audio_file, whisper_model, use_cli, output_dir, log, queue_worker=None):
@@ -274,6 +303,6 @@ class DownloadWorker(QObject):
     @pyqtSlot()
     def run(self):
         self.log.emit(f"Downloading model '{self.model_name}'...")
-        success = download_whisper_model(self.model_name)
-        self.log.emit("Download completed." if success else "Download failed.")
+        success, error = download_whisper_model(self.model_name)
+        self.log.emit("Download completed." if success else f"❌ Download failed: {error}")
         self.finished.emit(success, self.model_name)
