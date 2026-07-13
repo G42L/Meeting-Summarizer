@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-import whisper_engine
+from src import whisper_engine
 
 
 # ---------------------------------------------------------------------

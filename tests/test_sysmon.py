@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-import sysmon
+from src import sysmon
 
 
 # ---------------------------------------------------------------------

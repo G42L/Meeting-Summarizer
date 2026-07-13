@@ -7,7 +7,7 @@ import json
 import pytest
 import requests
 
-import llm_backend
+from src import llm_backend
 
 
 # ---------------------------------------------------------------------

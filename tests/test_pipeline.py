@@ -5,7 +5,7 @@ audio, a real Whisper model, or a real LLM server. Signal emissions are
 captured by connecting each pyqtSignal to a plain list.append, which is a
 direct (synchronous) connection since everything here runs on one thread.
 """
-import pipeline
+from src import pipeline
 
 
 # ---------------------------------------------------------------------

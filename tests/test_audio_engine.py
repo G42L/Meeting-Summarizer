@@ -7,7 +7,7 @@ miniaudio/sounddevice.
 import numpy as np
 import pytest
 
-import audio_engine
+from src import audio_engine
 
 
 # ---------------------------------------------------------------------
