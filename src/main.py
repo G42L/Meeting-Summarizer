@@ -233,7 +233,7 @@ LOG_ICON_COLORS = {
     "folder": "#b8730a",          # amber -- folder
     "clock": "#757575",          # gray -- waiting
     "stop-circle": "#757575",     # gray -- stopped (neutral, not an error)
-    "minus": "#757575",           # gray -- removed
+    "minus": "#d93025",           # red -- removed
     "trash-2": "#757575",         # gray -- clear/delete (not alarming)
 }
 
@@ -1830,11 +1830,11 @@ class MainWindow(QMainWindow):
 
     # ---------- Save / Open ----------
     def open_folder(self):
-        if self.last_md_path and os.path.exists(self.last_md_path):
-            folder = os.path.dirname(self.last_md_path)
-        else:
-            transcripts_dir = Path.cwd() / "transcripts"
-            folder = str(transcripts_dir) if transcripts_dir.exists() else os.getcwd()
+        """Always the general ./transcripts/ root -- opening a *specific*
+        session's folder is the History sidebar's own "Open Folder"
+        button's job (open_selected_history_folder), not this one's."""
+        transcripts_dir = Path.cwd() / "transcripts"
+        folder = str(transcripts_dir) if transcripts_dir.exists() else os.getcwd()
         self._open_path(folder)
 
     def _open_path(self, path):

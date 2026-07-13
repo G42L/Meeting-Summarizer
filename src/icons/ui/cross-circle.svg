@@ -1,11 +1,66 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Uploaded to: SVG Repo, www.svgrepo.com, Generator: SVG Repo Mixer Tools -->
-<svg width="800px" height="800px" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">
-<g fill="none" fill-rule="evenodd" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" transform="translate(2 2)">
-<circle cx="8.5" cy="8.5" r="8"/>
-<g transform="matrix(0 1 -1 0 17 0)">
-<path d="m5.5 11.5 6-6"/>
-<path d="m5.5 5.5 6 6"/>
-</g>
-</g>
-</svg>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Uploaded to: SVG Repo, www.svgrepo.com, Generator: SVG Repo Mixer Tools -->
+
+<svg
+   width="800px"
+   height="800px"
+   viewBox="0 0 21 21"
+   version="1.1"
+   id="svg2149"
+   sodipodi:docname="cross-circle.svg"
+   inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs2153" />
+  <sodipodi:namedview
+     id="namedview2151"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     showgrid="false"
+     inkscape:zoom="1.28375"
+     inkscape:cx="266.01753"
+     inkscape:cy="401.55794"
+     inkscape:window-width="3072"
+     inkscape:window-height="1587"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg2149" />
+  <g
+     fill="none"
+     fill-rule="evenodd"
+     stroke="#000000"
+     stroke-linecap="round"
+     stroke-linejoin="round"
+     transform="translate(2 2)"
+     id="g2147"
+     style="stroke-width:1.3125;stroke-dasharray:none">
+    <circle
+       cx="8.5"
+       cy="8.5"
+       r="8"
+       id="circle2139"
+       style="stroke-width:1.3125;stroke-dasharray:none" />
+    <g
+       transform="matrix(0 1 -1 0 17 0)"
+       id="g2145"
+       style="stroke-width:1.3125;stroke-dasharray:none">
+      <path
+         d="m5.5 11.5 6-6"
+         id="path2141"
+         style="stroke-width:1.3125;stroke-dasharray:none" />
+      <path
+         d="m5.5 5.5 6 6"
+         id="path2143"
+         style="stroke-width:1.3125;stroke-dasharray:none" />
+    </g>
+  </g>
+</svg>
