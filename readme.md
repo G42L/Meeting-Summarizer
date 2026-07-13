@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="icon.svg" width="128">
+  <img src="src/icon/icon.svg" width="128">
 </p>
 
 <h1 align="center">Meeting Transcriber</h1>
