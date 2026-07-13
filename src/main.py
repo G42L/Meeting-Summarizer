@@ -246,18 +246,37 @@ LOG_ICON_COLORS = {
 # default) would be too heavy for a minor, low-emphasis action.
 # ----------------------------------------------------------------------
 class FlatIconButton(QPushButton):
-    def __init__(self, icon_name, hover_color, normal_color=None, size=16, parent=None):
+    """
+    Borderless, background-less, fixed-size icon-only button base -- QSS
+    can't give a plain QPushButton this "just an icon, nothing else" look
+    reliably across platforms, so it's set directly here instead. Shared
+    base for HoverColorIconButton (e.g. remove-source, recolors on hover)
+    and ToggleIconButton (e.g. mute/unmute, swaps icon shape on check),
+    so both get identical sizing/style and only differ in what actually
+    changes (color vs. icon).
+    """
+    def __init__(self, size=18, parent=None):
         super().__init__(parent)
-        self._normal_color = normal_color
-        self._icon_name = icon_name
-        self._hover_icon = themed_icon(icon_name, QColor(hover_color), size)
         self.setIconSize(QSize(size, size))
         self.setFixedSize(size + 8, size + 8)
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet(
             "QPushButton { border: none; background: transparent; padding: 0px; }"
             "QPushButton:hover { border: none; background: transparent; }"
+            "QPushButton:checked { border: none; background: transparent; }"
         )
+
+
+class HoverColorIconButton(FlatIconButton):
+    """A FlatIconButton that swaps to a different color on hover -- QSS
+    alone can't recolor an already-rendered icon pixmap for a :hover
+    pseudo-state, so this pre-renders both and switches between them
+    directly."""
+    def __init__(self, icon_name, hover_color, normal_color=None, size=18, parent=None):
+        super().__init__(size, parent)
+        self._normal_color = normal_color
+        self._icon_name = icon_name
+        self._hover_icon = themed_icon(icon_name, QColor(hover_color), size)
         self.refresh_normal_icon()
 
     def refresh_normal_icon(self):
@@ -275,6 +294,28 @@ class FlatIconButton(QPushButton):
     def leaveEvent(self, event):
         self.setIcon(self._normal_icon)
         super().leaveEvent(event)
+
+
+class ToggleIconButton(FlatIconButton):
+    """A checkable FlatIconButton that swaps between two icon *shapes*
+    based on checked state (e.g. volume-high/volume-disabled for
+    mute/unmute) -- unlike HoverColorIconButton, the color never changes,
+    only which icon is shown."""
+    def __init__(self, icon_off, icon_on, size=18, tooltip_off="", tooltip_on="", parent=None):
+        super().__init__(size, parent)
+        self.setCheckable(True)
+        self._icon_off = icon_off
+        self._icon_on = icon_on
+        self._tooltip_off = tooltip_off
+        self._tooltip_on = tooltip_on
+        self.toggled.connect(self._update_icon)
+        self._update_icon(False)
+
+    def _update_icon(self, checked):
+        icon_name = self._icon_on if checked else self._icon_off
+        color = self.palette().color(QPalette.WindowText)
+        self.setIcon(themed_icon(icon_name, color, self.iconSize().width()))
+        self.setToolTip(self._tooltip_on if checked else self._tooltip_off)
 
 
 # ----------------------------------------------------------------------
@@ -314,12 +355,11 @@ class SourceRow(QWidget):
         layout.addWidget(self.gain_value_label)
         self.gain_slider.valueChanged.connect(self._on_gain_changed)
 
-        self.mute_btn = QPushButton()
-        self.mute_btn.setCheckable(True)
-        self.mute_btn.setIconSize(QSize(18, 18))
-        self.mute_btn.setFixedSize(32, 32)
-        self.mute_btn.toggled.connect(self._on_mute_toggled)
-        self._update_mute_icon(False)
+        self.mute_btn = ToggleIconButton(
+            "volume-high", "volume-disabled",
+            tooltip_off="Mute this source", tooltip_on="Unmute this source",
+        )
+        self.mute_btn.toggled.connect(lambda checked: self.mute_changed.emit(self.source_name, checked))
         layout.addWidget(self.mute_btn)
 
         # Small, fixed-size VU meter just for this one source.
@@ -330,20 +370,10 @@ class SourceRow(QWidget):
         self.vu.setMaximumWidth(140)
         layout.addWidget(self.vu)
 
-        remove_btn = FlatIconButton("cross-circle", hover_color="#d93025")
+        remove_btn = HoverColorIconButton("cross-circle", hover_color="#d93025")
         remove_btn.setToolTip("Remove this source")
         remove_btn.clicked.connect(lambda: self.remove_clicked.emit(self.source_name))
         layout.addWidget(remove_btn)
-
-    def _on_mute_toggled(self, checked):
-        self._update_mute_icon(checked)
-        self.mute_changed.emit(self.source_name, checked)
-
-    def _update_mute_icon(self, muted):
-        icon_name = "volume-disabled" if muted else "volume-high"
-        color = self.palette().color(QPalette.WindowText)
-        self.mute_btn.setIcon(themed_icon(icon_name, color, 18))
-        self.mute_btn.setToolTip("Unmute this source" if muted else "Mute this source")
 
     def _on_gain_changed(self, percent):
         self.gain_value_label.setText(f"{percent}%")
@@ -706,17 +736,17 @@ class MainWindow(QMainWindow):
         whisper_layout.addWidget(refresh_whisper_btn)
         whisper_group_layout.addLayout(whisper_layout)
 
-        review_layout = QHBoxLayout()
+        # Review + diarization share one row (rather than a row each) to
+        # save vertical space -- both are secondary, occasional-use options
+        # for the same "before summarizing" step.
+        options_layout = QHBoxLayout()
         self.review_transcript_check = QCheckBox("Review transcript before summarizing")
         self.review_transcript_check.setIcon(self._icon("edit-3"))
         self.review_transcript_check.setToolTip(
             "Pause after transcription so you can read/edit the text before it's sent to the LLM"
         )
-        review_layout.addWidget(self.review_transcript_check)
-        review_layout.addStretch()
-        whisper_group_layout.addLayout(review_layout)
+        options_layout.addWidget(self.review_transcript_check)
 
-        diarization_layout = QHBoxLayout()
         self.diarization_check = QCheckBox("Label speakers (diarization)")
         self.diarization_check.setIcon(self._icon("users"))
         self.diarization_check.setToolTip(
@@ -725,14 +755,16 @@ class MainWindow(QMainWindow):
             "terms accepted at huggingface.co"
         )
         self.diarization_check.toggled.connect(self.on_diarization_toggled)
-        diarization_layout.addWidget(self.diarization_check)
-        diarization_layout.addWidget(QLabel("HF Token:"))
+        options_layout.addWidget(self.diarization_check)
+        self.hf_token_label = QLabel("HF Token:")
+        self.hf_token_label.setEnabled(False)
+        options_layout.addWidget(self.hf_token_label)
         self.hf_token_edit = QLineEdit()
         self.hf_token_edit.setEchoMode(QLineEdit.Password)
         self.hf_token_edit.setPlaceholderText("hf_...")
         self.hf_token_edit.setEnabled(False)
-        diarization_layout.addWidget(self.hf_token_edit, stretch=1)
-        whisper_group_layout.addLayout(diarization_layout)
+        options_layout.addWidget(self.hf_token_edit, stretch=1)
+        whisper_group_layout.addLayout(options_layout)
 
         self.whisper_group.setLayout(whisper_group_layout)
         layout.addWidget(self.whisper_group)
@@ -1509,14 +1541,22 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def on_use_cli_toggled(self, checked):
         # Diarization needs faster-whisper's per-segment timestamps;
-        # whisper-cli's plain -otxt output has none, so grey it out rather
-        # than letting the user pick a combination that can't work.
+        # whisper-cli's plain -otxt output has none, so grey both
+        # diarization and its HF token field out rather than letting the
+        # user pick a combination that can't work. Remembers whether
+        # diarization was checked so unchecking "Use whisper-cli" restores
+        # it (and the token field along with it, via on_diarization_toggled)
+        # instead of leaving it force-disabled.
         if checked:
+            self._diarization_was_checked = self.diarization_check.isChecked()
             self.diarization_check.setChecked(False)
         self.diarization_check.setEnabled(not checked)
+        if not checked and getattr(self, "_diarization_was_checked", False):
+            self.diarization_check.setChecked(True)
 
     def on_diarization_toggled(self, checked):
         self.hf_token_edit.setEnabled(checked)
+        self.hf_token_label.setEnabled(checked)
 
     def _load_diarization_settings(self):
         settings = QSettings("MeetingTranscriber", "MeetingTranscriber")
