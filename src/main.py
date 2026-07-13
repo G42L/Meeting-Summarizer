@@ -315,6 +315,13 @@ class MuteButton(FlatIconButton):
     """
     LONG_PRESS_MS = 500
     ICON_FOR_MODE = {"none": "volume-high", "short": "volume-muted", "long": "volume-disabled"}
+    # Fixed (not palette-driven) colors, each verified >=3:1 contrast
+    # against both a white and a #1e1e1e dark background, same bar as
+    # LOG_ICON_COLORS. Deliberately inverted from the usual red=bad/
+    # green=good convention: red on "none" flags a hot mic ("you're being
+    # heard, recording-ready"), green on "short" reassures the opposite
+    # ("fully muted, safe to talk freely").
+    COLOR_FOR_MODE = {"none": "#d93025", "short": "#1e8e3e", "long": "#cc6600"}
     mode_changed = pyqtSignal(str)   # "none" | "short" | "long"
 
     def __init__(self, size=18, parent=None):
@@ -350,7 +357,7 @@ class MuteButton(FlatIconButton):
         self.mode_changed.emit(mode)
 
     def _update_icon(self):
-        color = self.palette().color(QPalette.WindowText)
+        color = QColor(self.COLOR_FOR_MODE[self._mode])
         self.setIcon(themed_icon(self.ICON_FOR_MODE[self._mode], color, self.iconSize().width()))
         self.setToolTip({
             "none": "Click to mute, hold to mute (keep meter active)",
@@ -812,8 +819,10 @@ class MainWindow(QMainWindow):
 
         self._load_diarization_settings()
 
-        # ----- LLM Backend and Model -----
+        # ----- LLM Backend and Model (+ summary style, folded in below to save a row) -----
         self.llm_group = QGroupBox("LLM Backend")
+        llm_group_layout = QVBoxLayout()
+
         llm_layout = QHBoxLayout()
         llm_layout.addWidget(QLabel("Backend:"))
         self.backend_combo = QComboBox()
@@ -827,21 +836,16 @@ class MainWindow(QMainWindow):
         refresh_backend_btn = QPushButton(self._icon("refresh-cw"), "Refresh")
         refresh_backend_btn.clicked.connect(self.refresh_backends)
         llm_layout.addWidget(refresh_backend_btn)
-        self.llm_group.setLayout(llm_layout)
-        layout.addWidget(self.llm_group)
-
-        # ----- Summary Style (prompt template picker) -----
-        self.prompt_style_group = QGroupBox("Summary Style")
-        prompt_style_layout = QVBoxLayout()
+        llm_group_layout.addLayout(llm_layout)
 
         prompt_style_row = QHBoxLayout()
-        prompt_style_row.addWidget(QLabel("Style:"))
+        prompt_style_row.addWidget(QLabel("Summary Style:"))
         self.prompt_style_combo = QComboBox()
         self.prompt_style_combo.addItems(list(llm_backend.PROMPT_TEMPLATES.keys()) + ["Custom..."])
         self.prompt_style_combo.setToolTip("How the LLM should summarize the transcript")
         self.prompt_style_combo.currentTextChanged.connect(self.on_prompt_style_changed)
         prompt_style_row.addWidget(self.prompt_style_combo, stretch=1)
-        prompt_style_layout.addLayout(prompt_style_row)
+        llm_group_layout.addLayout(prompt_style_row)
 
         self.custom_prompt_edit = QPlainTextEdit()
         self.custom_prompt_edit.setMaximumHeight(80)
@@ -850,10 +854,10 @@ class MainWindow(QMainWindow):
         )
         self.custom_prompt_edit.setToolTip("The literal text {transcript} will be replaced with the full transcript.")
         self.custom_prompt_edit.setVisible(False)
-        prompt_style_layout.addWidget(self.custom_prompt_edit)
+        llm_group_layout.addWidget(self.custom_prompt_edit)
 
-        self.prompt_style_group.setLayout(prompt_style_layout)
-        layout.addWidget(self.prompt_style_group)
+        self.llm_group.setLayout(llm_group_layout)
+        layout.addWidget(self.llm_group)
 
         self._load_prompt_style_settings()
 
@@ -1919,7 +1923,6 @@ class MainWindow(QMainWindow):
         self.dev_group.setEnabled(enabled)
         self.whisper_group.setEnabled(enabled)
         self.llm_group.setEnabled(enabled)
-        self.prompt_style_group.setEnabled(enabled)
 
 
 # ----------------------------------------------------------------------
