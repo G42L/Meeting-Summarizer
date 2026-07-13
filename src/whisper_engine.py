@@ -207,7 +207,7 @@ def transcribe_faster(audio_file, whisper_model, output_dir, log, queue_worker=N
         return None
 
     try:
-        log(f"🎤 Starting transcription of '{audio_file}'...")
+        log(f"🌊 Starting transcription of '{audio_file}'...")
         segments, info = model.transcribe(audio_file, beam_size=5)
         log(f"📊 Language: {info.language}, probability: {info.language_probability:.2f}")
 
@@ -254,7 +254,7 @@ def transcribe_faster_with_segments(audio_file, whisper_model, output_dir, log, 
         return None, None
 
     try:
-        log(f"🎤 Starting transcription of '{audio_file}'...")
+        log(f"🌊 Starting transcription of '{audio_file}'...")
         raw_segments, info = model.transcribe(audio_file, beam_size=5)
         log(f"📊 Language: {info.language}, probability: {info.language_probability:.2f}")
 

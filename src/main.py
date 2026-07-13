@@ -188,11 +188,12 @@ QListWidget::item:selected {
 # Markdown image reference resolved against a QTextDocument resource (see
 # MainWindow._register_log_icons()).
 LOG_ICONS = {
-    "✅": "check",
-    "❌": "x",
+    "✅": "check-circle-outside",
+    "❌": "cross-circle",
     "⚠️": "alert-triangle",
     "🛑": "alert-octagon",
     "🎤": "mic",
+    "🌊": "audio-wave",  # "Starting transcription..." -- distinct from mic/Recording above
     "⏹": "stop-circle",
     "📁": "folder",
     "📂": "folder",
@@ -216,14 +217,15 @@ LOG_ICONS = {
 # #1e1e1e dark background, so they stay legible in either OS theme without
 # needing separate light/dark variants.
 LOG_ICON_COLORS = {
-    "check": "#1e8e3e",           # green -- success
+    "check-circle-outside": "#1e8e3e",  # green -- success
     "plus": "#1e8e3e",            # green -- added
-    "x": "#d93025",               # red -- error
+    "cross-circle": "#d93025",    # red -- error
     "alert-octagon": "#d93025",   # red -- stopped/cancelled
     "alert-triangle": "#b8860b",  # amber -- warning
     "refresh-cw": "#1a73e8",      # blue -- in progress
     "inbox": "#1a73e8",           # blue -- queued
     "mic": "#1a73e8",             # blue -- active recording
+    "audio-wave": "#1a73e8",      # blue -- transcribing
     "cpu": "#9350c4",             # purple -- LLM
     "users": "#9350c4",           # purple -- speakers
     "edit-3": "#0e8a7d",          # teal -- review
@@ -234,6 +236,45 @@ LOG_ICON_COLORS = {
     "minus": "#757575",           # gray -- removed
     "trash-2": "#757575",         # gray -- clear/delete (not alarming)
 }
+
+
+# ----------------------------------------------------------------------
+# A small, borderless icon-only button that swaps to a different color on
+# hover -- QSS alone can't recolor an already-rendered icon pixmap for a
+# :hover pseudo-state, so this just pre-renders both and switches between
+# them directly. Used where a full bordered QPushButton (BASE_STYLESHEET's
+# default) would be too heavy for a minor, low-emphasis action.
+# ----------------------------------------------------------------------
+class FlatIconButton(QPushButton):
+    def __init__(self, icon_name, hover_color, normal_color=None, size=16, parent=None):
+        super().__init__(parent)
+        self._normal_color = normal_color
+        self._icon_name = icon_name
+        self._hover_icon = themed_icon(icon_name, QColor(hover_color), size)
+        self.setIconSize(QSize(size, size))
+        self.setFixedSize(size + 8, size + 8)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet(
+            "QPushButton { border: none; background: transparent; padding: 0px; }"
+            "QPushButton:hover { border: none; background: transparent; }"
+        )
+        self.refresh_normal_icon()
+
+    def refresh_normal_icon(self):
+        """Re-renders the non-hovered icon against the current palette's
+        text color (or the fixed normal_color if one was given) -- call
+        this if the palette changes after construction."""
+        color = self._normal_color or self.palette().color(QPalette.WindowText)
+        self._normal_icon = themed_icon(self._icon_name, QColor(color) if isinstance(color, str) else color, self.iconSize().width())
+        self.setIcon(self._normal_icon)
+
+    def enterEvent(self, event):
+        self.setIcon(self._hover_icon)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.setIcon(self._normal_icon)
+        super().leaveEvent(event)
 
 
 # ----------------------------------------------------------------------
@@ -273,9 +314,13 @@ class SourceRow(QWidget):
         layout.addWidget(self.gain_value_label)
         self.gain_slider.valueChanged.connect(self._on_gain_changed)
 
-        self.mute_check = QCheckBox("Mute")
-        self.mute_check.toggled.connect(lambda checked: self.mute_changed.emit(self.source_name, checked))
-        layout.addWidget(self.mute_check)
+        self.mute_btn = QPushButton()
+        self.mute_btn.setCheckable(True)
+        self.mute_btn.setIconSize(QSize(18, 18))
+        self.mute_btn.setFixedSize(32, 32)
+        self.mute_btn.toggled.connect(self._on_mute_toggled)
+        self._update_mute_icon(False)
+        layout.addWidget(self.mute_btn)
 
         # Small, fixed-size VU meter just for this one source.
         self.vu = vu_meters.MiniLEDHorizontalVUMeter(alpha=0.10)
@@ -285,12 +330,20 @@ class SourceRow(QWidget):
         self.vu.setMaximumWidth(140)
         layout.addWidget(self.vu)
 
-        remove_btn = QPushButton()
-        remove_btn.setIcon(themed_icon("x", self.palette().color(QPalette.WindowText)))
-        remove_btn.setMaximumWidth(28)
+        remove_btn = FlatIconButton("cross-circle", hover_color="#d93025")
         remove_btn.setToolTip("Remove this source")
         remove_btn.clicked.connect(lambda: self.remove_clicked.emit(self.source_name))
         layout.addWidget(remove_btn)
+
+    def _on_mute_toggled(self, checked):
+        self._update_mute_icon(checked)
+        self.mute_changed.emit(self.source_name, checked)
+
+    def _update_mute_icon(self, muted):
+        icon_name = "volume-disabled" if muted else "volume-high"
+        color = self.palette().color(QPalette.WindowText)
+        self.mute_btn.setIcon(themed_icon(icon_name, color, 18))
+        self.mute_btn.setToolTip("Unmute this source" if muted else "Mute this source")
 
     def _on_gain_changed(self, percent):
         self.gain_value_label.setText(f"{percent}%")
@@ -380,8 +433,8 @@ class TranscriptReviewDialog(QDialog):
         continue_btn = buttons.addButton("Continue", QDialogButtonBox.AcceptRole)
         cancel_btn = buttons.addButton("Cancel Job", QDialogButtonBox.RejectRole)
         text_color = self.palette().color(QPalette.WindowText)
-        continue_btn.setIcon(themed_icon("check", text_color))
-        cancel_btn.setIcon(themed_icon("x", text_color))
+        continue_btn.setIcon(themed_icon("check-circle-outside", text_color))
+        cancel_btn.setIcon(themed_icon("cross-circle", text_color))
         continue_btn.setProperty("cls", "primary")
         continue_btn.clicked.connect(self.accept)
         cancel_btn.clicked.connect(self.reject)
