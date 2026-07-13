@@ -189,6 +189,58 @@ def test_set_gain_and_muted_helpers(mixer):
     assert mixer.sources["a"].muted is True
 
 
+# ---------------------------------------------------------------------
+# full_mute -- the "short press" mode (SourceRow's MuteButton) additionally
+# silences a source's own dedicated VU meter, on top of the plain `muted`
+# flag (the "long press" mode) that only excludes it from the mix.
+# ---------------------------------------------------------------------
+
+def test_audio_source_full_mute_defaults_to_false():
+    source = audio_engine.AudioSource("test", device_id=None, samplerate=16000, channels=1)
+    assert source.full_mute is False
+
+
+def test_set_muted_with_full_mute_true(mixer):
+    _add_active_source(mixer, "a")
+    mixer.set_muted("a", True, full_mute=True)
+    assert mixer.sources["a"].muted is True
+    assert mixer.sources["a"].full_mute is True
+
+
+def test_set_muted_full_mute_defaults_to_false(mixer):
+    _add_active_source(mixer, "a")
+    mixer.set_muted("a", True)
+    assert mixer.sources["a"].full_mute is False
+
+
+def test_set_muted_unmuting_forces_full_mute_off(mixer):
+    _add_active_source(mixer, "a")
+    mixer.set_muted("a", True, full_mute=True)
+    mixer.set_muted("a", False, full_mute=True)  # unmuting -- full_mute should not stick
+    assert mixer.sources["a"].muted is False
+    assert mixer.sources["a"].full_mute is False
+
+
+def test_get_source_level_returns_zero_when_full_mute(mixer):
+    a = _add_active_source(mixer, "a")
+    a.level = 0.75
+    mixer.set_muted("a", True, full_mute=True)
+    assert mixer.get_source_level("a") == 0.0
+
+
+def test_get_source_level_stays_real_when_muted_but_not_full_mute(mixer):
+    """Long-press mode: excluded from the mix, but the row's own VU meter
+    should keep showing real activity."""
+    a = _add_active_source(mixer, "a")
+    a.level = 0.75
+    mixer.set_muted("a", True, full_mute=False)
+    assert mixer.get_source_level("a") == 0.75
+
+
+def test_get_source_level_unknown_source_returns_zero(mixer):
+    assert mixer.get_source_level("does-not-exist") == 0.0
+
+
 def test_get_source_errors_only_reports_sources_with_errors(mixer):
     a = _add_active_source(mixer, "a")
     _add_active_source(mixer, "b")
