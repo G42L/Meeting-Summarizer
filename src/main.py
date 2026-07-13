@@ -997,6 +997,19 @@ class MainWindow(QMainWindow):
         self._console_render_timer.setInterval(200)
         self._console_render_timer.timeout.connect(self._flush_console)
 
+        # Whether the console should keep pinned to the bottom as new lines
+        # arrive, vs. leaving it alone because the user scrolled up to read
+        # something. Tracked live off the scrollbar's own valueChanged signal
+        # rather than comparing scrollbar.value()/maximum() immediately
+        # before and after each setHtml() re-render (the previous approach)
+        # -- that comparison turned out unreliable on macOS specifically,
+        # where the native Cocoa scrollbar doesn't report a stable maximum()
+        # at the exact moment this code reads it, so "was at bottom" kept
+        # evaluating False and the console appeared to jump to the top on
+        # every new line even though it hadn't actually been scrolled up.
+        self._log_autoscroll = True
+        self.log_text.verticalScrollBar().valueChanged.connect(self._on_log_scroll_changed)
+
         self.last_md_path = None
 
         # ----- History (past sessions from ./transcripts/) -----
@@ -1891,9 +1904,18 @@ class MainWindow(QMainWindow):
         if not self._console_render_timer.isActive():
             self._console_render_timer.start()
 
+    def _on_log_scroll_changed(self, value):
+        scrollbar = self.log_text.verticalScrollBar()
+        self._log_autoscroll = value >= scrollbar.maximum() - 4
+
     def _flush_console(self):
         scrollbar = self.log_text.verticalScrollBar()
-        was_at_bottom = scrollbar.value() >= scrollbar.maximum() - 4
+        was_at_bottom = self._log_autoscroll
+        # setHtml() below can itself reset the scrollbar (e.g. to 0) while
+        # rebuilding the document layout, which would otherwise feed back
+        # into _on_log_scroll_changed and corrupt _log_autoscroll before
+        # we get a chance to restore the real position -- block that.
+        scrollbar.blockSignals(True)
         # Not self.log_text.setMarkdown(...) directly -- verified directly
         # that Qt's Markdown parser produces the correct `<img src="...">`
         # reference in the resulting document structure, but its inline-
@@ -1909,6 +1931,8 @@ class MainWindow(QMainWindow):
         self.log_text.setHtml(parser.toHtml())
         if was_at_bottom:
             scrollbar.setValue(scrollbar.maximum())
+        scrollbar.blockSignals(False)
+        self._log_autoscroll = was_at_bottom
 
     def reset_ui(self):
         self.record_btn.setEnabled(True)

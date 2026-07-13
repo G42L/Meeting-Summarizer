@@ -376,6 +376,62 @@ def test_stylesheet_button_color_updates_on_palette_change(main_window):
         win.changeEvent(QEvent(QEvent.PaletteChange))
 
 
+# ---------------------------------------------------------------------
+# Log console autoscroll-to-bottom.
+#
+# _flush_console() re-renders the whole console document on every debounced
+# batch of new lines (see append_log/append_summary), which requires
+# manually restoring the scroll position afterward since setHtml() doesn't
+# preserve it on its own. The original implementation inferred "was the
+# user at the bottom" by comparing scrollbar.value()/maximum() immediately
+# around the setHtml() call -- reported unreliable on macOS specifically
+# (the console appeared to jump to the top on every new line even when it
+# hadn't been scrolled up), so this was replaced with a persistently
+# tracked _log_autoscroll flag fed by the scrollbar's own valueChanged
+# signal instead of an ad hoc before/after comparison.
+# ---------------------------------------------------------------------
+
+def test_log_stays_pinned_to_bottom_as_lines_are_appended(main_window):
+    win = main_window
+    win.show()
+    win.resize(900, 950)
+    from PyQt5.QtWidgets import QApplication
+    QApplication.instance().processEvents()
+
+    scrollbar = win.log_text.verticalScrollBar()
+    for i in range(30):
+        win.append_log(f"Log line {i} with enough text to require scrolling.")
+        win._console_render_timer.stop()
+        win._flush_console()
+
+    assert scrollbar.value() == scrollbar.maximum()
+    assert scrollbar.maximum() > 0  # sanity: content actually overflowed
+
+
+def test_log_does_not_yank_view_back_down_after_manual_scroll_up(main_window):
+    win = main_window
+    win.show()
+    win.resize(900, 950)
+    from PyQt5.QtWidgets import QApplication
+    QApplication.instance().processEvents()
+
+    scrollbar = win.log_text.verticalScrollBar()
+    for i in range(30):
+        win.append_log(f"Log line {i} with enough text to require scrolling.")
+        win._console_render_timer.stop()
+        win._flush_console()
+
+    scrollbar.setValue(0)  # simulate the user manually scrolling up to read
+    assert win._log_autoscroll is False
+
+    for i in range(30, 35):
+        win.append_log(f"Log line {i} with enough text to require scrolling.")
+        win._console_render_timer.stop()
+        win._flush_console()
+
+    assert scrollbar.value() == 0
+
+
 def test_removed_source_row_refresher_pruned_without_breaking_others(main_window):
     from PyQt5 import sip
     from PyQt5.QtCore import QEvent
