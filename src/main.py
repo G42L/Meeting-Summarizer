@@ -524,7 +524,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Meeting Transcriber")
-        self.setMinimumSize(960, 925)
+        self.setMinimumSize(960, 995)
 
         self._icon_cache = {}
 
