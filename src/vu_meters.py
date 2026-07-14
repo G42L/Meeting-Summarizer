@@ -2348,9 +2348,21 @@ class BroadcastStereoVUMeter(QWidget):
 
     def paintEvent(self, event):
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         r = self.rect()
-        p.fillRect(r, QColor(0, 0, 0))
+
+        # Background -- same rounded gradient panel as DawPeakRmsVUMeter,
+        # for visual consistency between the two stereo-strip meters. Drawn
+        # with AA on (needed for the rounded corners); the LED segments
+        # below intentionally stay AA-off for crisp pixel edges.
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        bg_grad = QLinearGradient(r.left(), r.top(), r.left(), r.bottom())
+        bg_grad.setColorAt(0.0, QColor(32, 32, 36, 235))
+        bg_grad.setColorAt(1.0, QColor(16, 16, 19, 235))
+        p.setPen(QPen(QColor(60, 60, 65), 1))
+        p.setBrush(QBrush(bg_grad))
+        p.drawRoundedRect(r, 8, 8)
+
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
         # -------------------------------------------------
         # Layout
