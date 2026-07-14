@@ -132,12 +132,18 @@ class BasicVUMeter(QWidget):
         # dB scale limits
         self.db_min = -50.0
         self.db_max = 6.0
-        
-        # Enable transparency
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setAutoFillBackground(False)
-        self.setStyleSheet("background: transparent;")
 
+        # Unlike every other meter here, BasicVUMeter paints a fully opaque
+        # background itself (see paintEvent's fillRect), so it's set up
+        # opaque from construction rather than starting translucent and
+        # being flipped to opaque later -- toggling WA_TranslucentBackground
+        # off after a widget's native surface already exists doesn't take
+        # effect cleanly, leaving old frames un-erased and bleeding into
+        # new ones (visible as a few seconds of flicker) until Qt catches
+        # up. See the comment on ClassicHorizontalVUMeter's __init__ for
+        # the mirror-image version of this bug (translucent fighting
+        # autoFillBackground(True)).
+        self.setAutoFillBackground(True)
         pal = self.palette()
         pal.setColor(self.backgroundRole(), QColor(30, 30, 30))
         self.setPalette(pal)
@@ -2647,18 +2653,7 @@ def create_vu_meter(index, parent=None):
         index = 0
     _, widget_cls, alpha, min_width = VU_METER_STYLES[index]
 
-    if widget_cls is BasicVUMeter:
-        # BasicVUMeter is opaque (it doesn't paint a translucent bg itself),
-        # so it needs the palette override the original code gave it.
-        w = widget_cls(parent, alpha=alpha)
-        w.setAutoFillBackground(True)
-        pal = w.palette()
-        pal.setColor(w.backgroundRole(), QColor(30, 30, 30))
-        w.setPalette(pal)
-        w.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
-        w.setStyleSheet("")
-    else:
-        w = widget_cls(parent, alpha=alpha)
+    w = widget_cls(parent, alpha=alpha)
 
     if min_width is not None:
         w.setMinimumWidth(min_width)
