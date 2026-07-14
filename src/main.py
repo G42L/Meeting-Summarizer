@@ -909,7 +909,11 @@ class MainWindow(QMainWindow):
         # here, or it gets added to the layout twice.
         self.vumeter = None
         default_index = 4  # "Analog VU-meter" -- matches the previous default
-        self.vu_style_combo.setCurrentIndex(default_index)
+        settings = QSettings("MeetingTranscriber", "MeetingTranscriber")
+        saved_index = settings.value("vu_style/index", default_index, type=int)
+        if not (0 <= saved_index < self.vu_style_combo.count()):
+            saved_index = default_index
+        self.vu_style_combo.setCurrentIndex(saved_index)
 
         vis_main_layout.addLayout(h_layout)
         vis_group.setLayout(vis_main_layout)
@@ -1537,6 +1541,9 @@ class MainWindow(QMainWindow):
     # VU style switching
     # ------------------------------------------------------------------
     def switch_vu_style(self, index):
+        settings = QSettings("MeetingTranscriber", "MeetingTranscriber")
+        settings.setValue("vu_style/index", index)
+
         old = self.vumeter
         if old is not None:
             self.vu_container_layout.removeWidget(old)
