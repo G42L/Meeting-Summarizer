@@ -25,9 +25,9 @@ instead of editing MainWindow.
 from collections import deque
 
 import numpy as np
-from PyQt5.QtWidgets import QWidget, QSizePolicy
-from PyQt5.QtCore import Qt, QPoint, QRect, QRectF
-from PyQt5.QtGui import (
+from PyQt6.QtWidgets import QWidget, QSizePolicy
+from PyQt6.QtCore import Qt, QPoint, QRect, QRectF
+from PyQt6.QtGui import (
     QPainter, QPen, QColor, QLinearGradient, QConicalGradient, QBrush,
     QPainterPath, QFont, QRadialGradient
 )
@@ -49,7 +49,7 @@ class WaveformDisplay(QWidget):
         self.setPalette(pal)
 
         # Enable transparency
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(True)
         self.setStyleSheet("background: transparent;")
 
@@ -60,7 +60,7 @@ class WaveformDisplay(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect()
         w = rect.width()
         h = rect.height()
@@ -71,8 +71,8 @@ class WaveformDisplay(QWidget):
 
         if not self.audio_buffer:
             # Draw "No input" text
-            painter.setPen(Qt.gray)
-            painter.drawText(rect, Qt.AlignCenter, "Waiting for audio...")
+            painter.setPen(Qt.GlobalColor.gray)
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "Waiting for audio...")
             return
 
         # Get samples
@@ -104,7 +104,7 @@ class WaveformDisplay(QWidget):
             painter.drawPath(path)
 
         # Draw zero line
-        painter.setPen(QPen(QColor(80, 80, 80), 1, Qt.DashLine))
+        painter.setPen(QPen(QColor(80, 80, 80), 1, Qt.PenStyle.DashLine))
         painter.drawLine(0, h//2, w, h//2)
 
         # Draw peak indicator (optional)
@@ -134,7 +134,7 @@ class BasicVUMeter(QWidget):
         self.db_max = 6.0
         
         # Enable transparency
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.setStyleSheet("background: transparent;")
 
@@ -174,7 +174,7 @@ class BasicVUMeter(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect()
         w = rect.width()
         h = rect.height()
@@ -238,7 +238,7 @@ class RetroLEDVerticalVUMeter(QWidget):
         self.setMaximumHeight(150)
         
         # Enable transparency
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.setStyleSheet("background: transparent;")
 
@@ -303,7 +303,7 @@ class RetroLEDVerticalVUMeter(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         rect = self.rect()
 
@@ -340,7 +340,7 @@ class RetroLEDVerticalVUMeter(QWidget):
             t = (db - self.db_min) / (self.db_max - self.db_min)
             y = int(meter_rect.bottom() - t * meter_rect.height())
             painter.drawLine(scale_width - 8, y, scale_width - 2, y)
-            painter.drawText( 2, y + 4, 26, 10, Qt.AlignRight, str(db))
+            painter.drawText( 2, y + 4, 26, 10, Qt.AlignmentFlag.AlignRight, str(db))
 
         # ==================================================
         # LEDs
@@ -369,7 +369,7 @@ class RetroLEDVerticalVUMeter(QWidget):
 
             off_color = QColor(35, 35, 35)
 
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
 
             if i < lit_segments:
                 painter.setBrush(on_color)
@@ -382,7 +382,7 @@ class RetroLEDVerticalVUMeter(QWidget):
         # Meter Border
         # ==================================================
         painter.setPen(QPen(QColor(90, 90, 90), 1))
-        painter.setBrush(Qt.NoBrush)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(meter_rect)
 
         # ==================================================
@@ -396,7 +396,7 @@ class RetroLEDVerticalVUMeter(QWidget):
         # ==================================================
         # Clip LED
         # ==================================================
-        painter.setPen(Qt.NoPen)
+        painter.setPen(Qt.PenStyle.NoPen)
 
         if self.clip_counter > 0:
             painter.setBrush(QColor(255, 0, 0))
@@ -433,7 +433,7 @@ class RetroLEDHorizontalVUMeter(QWidget):
         self.setMaximumHeight(150)
         
         # Enable transparency
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.setStyleSheet("background: transparent;")
 
@@ -498,7 +498,7 @@ class RetroLEDHorizontalVUMeter(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         rect = self.rect()
 
@@ -537,7 +537,7 @@ class RetroLEDHorizontalVUMeter(QWidget):
             x = int(meter_rect.left() + t * meter_rect.width())
             y = meter_rect.bottom() + 10
             painter.drawLine(x, y - 5, x, y + 2)
-            painter.drawText(x - 15, y + 15, 30, 12, Qt.AlignHCenter, str(db))
+            painter.drawText(x - 15, y + 15, 30, 12, Qt.AlignmentFlag.AlignHCenter, str(db))
 
         # ==================================================
         # LEDs - HORIZONTAL now
@@ -566,7 +566,7 @@ class RetroLEDHorizontalVUMeter(QWidget):
 
             off_color = QColor(35, 35, 35)
 
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
 
             if i < lit_segments:
                 painter.setBrush(on_color)
@@ -579,7 +579,7 @@ class RetroLEDHorizontalVUMeter(QWidget):
         # Meter Border
         # ==================================================
         painter.setPen(QPen(QColor(90, 90, 90), 1))
-        painter.setBrush(Qt.NoBrush)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(meter_rect)
 
         # ==================================================
@@ -593,7 +593,7 @@ class RetroLEDHorizontalVUMeter(QWidget):
         # ==================================================
         # Clip LED
         # ==================================================
-        painter.setPen(Qt.NoPen)
+        painter.setPen(Qt.PenStyle.NoPen)
 
         if self.clip_counter > 0:
             painter.setBrush(QColor(255, 0, 0))
@@ -623,7 +623,7 @@ class MiniLEDHorizontalVUMeter(QWidget):
         self.setMinimumHeight(14)
         self.setMaximumHeight(28)
 
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.setStyleSheet("background: transparent;")
 
@@ -675,7 +675,7 @@ class MiniLEDHorizontalVUMeter(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect()
 
         # Background
@@ -706,7 +706,7 @@ class MiniLEDHorizontalVUMeter(QWidget):
             else:
                 on_color = QColor(255, 60, 60)
 
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(on_color if i < lit_segments else QColor(35, 35, 35))
             painter.drawRoundedRect(x, meter_rect.top(), seg_width, meter_rect.height(), 1, 1)
 
@@ -717,7 +717,7 @@ class MiniLEDHorizontalVUMeter(QWidget):
             painter.drawLine(peak_x, meter_rect.top(), peak_x, meter_rect.bottom())
 
         # Small clip indicator -- a dot, not a "PK" label.
-        painter.setPen(Qt.NoPen)
+        painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(255, 0, 0) if self.clip_counter > 0 else QColor(60, 0, 0))
         dot_y = rect.height() // 2 - clip_dot_size // 2
         painter.drawEllipse(rect.width() - clip_dot_size - 3, dot_y, clip_dot_size, clip_dot_size)
@@ -743,7 +743,7 @@ class ModernVUMeter(QWidget):
         self.db_values = [-50, -40, -30, -20, -10, 0, 3, 6]
         self.segments = 24  # Number of LED segments
 
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.setStyleSheet("background: transparent;")
 
@@ -775,7 +775,7 @@ class ModernVUMeter(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect()
 
         # ---- Dark background with rounded corners ----
@@ -844,7 +844,7 @@ class ModernVUMeter(QWidget):
             x = int(meter_rect.left() + norm * w)
             painter.drawLine(x, meter_rect.bottom() + 2, x, meter_rect.bottom() + 8)
             label = f"{db:+d}" if db > 0 else str(db)
-            painter.drawText(x - 12, meter_rect.bottom() + 20, 24, 14, Qt.AlignCenter, label)
+            painter.drawText(x - 12, meter_rect.bottom() + 20, 24, 14, Qt.AlignmentFlag.AlignCenter, label)
 
         # ---- Labels ----
         painter.setPen(QPen(QColor(180, 180, 180), 1))
@@ -870,7 +870,7 @@ class AnalogStyleVUMeter(QWidget):
         self.alpha = alpha          # lower = more inertia
 
         # Enable transparency
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.setStyleSheet("background: transparent;")
 
@@ -914,7 +914,7 @@ class AnalogStyleVUMeter(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect()
         w = rect.width()
         h = rect.height()
@@ -1029,7 +1029,7 @@ class ClassicHorizontalVUMeter(QWidget):
         self.alpha = alpha          # lower = more inertia
 
         # Enable transparency
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         # self.setAutoFillBackground(False)
         # self.setStyleSheet("background: transparent;")
 
@@ -1093,7 +1093,7 @@ class ClassicHorizontalVUMeter(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect()
         w = rect.width()
         h = rect.height()
@@ -1133,7 +1133,7 @@ class ClassicHorizontalVUMeter(QWidget):
             painter.drawLine(x, bottom, x, bottom + 8)
             # Label
             label = f"{db:+d}" if db > 0 else str(db)
-            painter.drawText(x - 12, bottom + 18, 24, 14, Qt.AlignCenter, label)
+            painter.drawText(x - 12, bottom + 18, 24, 14, Qt.AlignmentFlag.AlignCenter, label)
 
         # Minor ticks (optional, between major ones)
         minor_db = [-15, -12, -8, -6, -1, 1, 4, 7]
@@ -1200,7 +1200,7 @@ class GlassVUMeter(QWidget):
         self.db_values = [-50, -40, -30, -20, -10, 0, 3, 6]
 
         # Enable transparency and set background
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.setStyleSheet("background: transparent;")
 
@@ -1242,7 +1242,7 @@ class GlassVUMeter(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect()  # Use the full widget area
         # rect = rect.adjusted(8, 8, -8, -8) # Use the less than full widget area
 
@@ -1275,7 +1275,7 @@ class GlassVUMeter(QWidget):
             painter.drawLine(x, center_y - 12, x, center_y - 4)
             # Label
             label = f"{db:+d}" if db > 0 else str(db)
-            painter.drawText(x - 12, center_y - 16, 24, 14, Qt.AlignCenter, label)
+            painter.drawText(x - 12, center_y - 16, 24, 14, Qt.AlignmentFlag.AlignCenter, label)
 
         # Minor ticks (optional)
         minor_db = [-45, -35, -25, -15, -5, -1, 1, 4]
@@ -1306,17 +1306,17 @@ class GlassVUMeter(QWidget):
 
         # Glow (soft shadow) – draw a thicker, transparent line
         glow_color = QColor(255, 140, 50, 60)
-        painter.setPen(QPen(glow_color, 6, Qt.SolidLine, Qt.RoundCap))
+        painter.setPen(QPen(glow_color, 6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         painter.drawLine(needle_x, needle_top, needle_x, needle_bottom)
 
         # Main needle (thin, bright)
-        painter.setPen(QPen(QColor(255, 120, 50), 2, Qt.SolidLine, Qt.RoundCap))
+        painter.setPen(QPen(QColor(255, 120, 50), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         painter.drawLine(needle_x, needle_top, needle_x, needle_bottom)
 
         # ---- Peak hold (yellow dot) ----
         if self.peak_hold > 0.02:
             peak_x = int(left + self.peak_hold * (right - left))
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(255, 255, 0))
             painter.drawEllipse(peak_x - 4, center_y - 16, 8, 8)
 
@@ -1345,7 +1345,7 @@ class LiquidGlassVUMeter(QWidget):
         self.db_max = 6.0
         self.db_values = [-50, -40, -30, -20, -10, 0, 3, 6]
 
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.setStyleSheet("background: transparent;")
 
@@ -1377,7 +1377,7 @@ class LiquidGlassVUMeter(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect()
 
         # ---- Background: dark with subtle gradient ----
@@ -1424,7 +1424,7 @@ class LiquidGlassVUMeter(QWidget):
             grad.setColorAt(1.0, QColor(0, 255, 150, 200))    # green at top
             
             # Draw liquid with rounded bottom corners
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(grad))
             
             # Create rounded rectangle for liquid (only bottom rounded)
@@ -1479,7 +1479,7 @@ class LiquidGlassVUMeter(QWidget):
             peak_x = meter_rect.left() + w // 2
             
             # Glow
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(0, 200, 255, 60))
             painter.drawEllipse(peak_x - 10, peak_y - 10, 20, 20)
             # Core
@@ -1510,7 +1510,7 @@ class NeonRetroVUMeter(QWidget):
         self.alpha = alpha
 
         # Enable transparency and set background
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.setStyleSheet("background: transparent;")
 
@@ -1518,7 +1518,7 @@ class NeonRetroVUMeter(QWidget):
         self.db_max = 6.0
         self.db_values = [-50, -40, -30, -20, -10, 0, 3, 6]
 
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(True)
         pal = self.palette()
         pal.setColor(self.backgroundRole(), QColor(10, 5, 20))
@@ -1552,7 +1552,7 @@ class NeonRetroVUMeter(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect()  # Use the full widget area
         # rect = rect.adjusted(8, 8, -8, -8) # Use the less than full widget area
 
@@ -1582,7 +1582,7 @@ class NeonRetroVUMeter(QWidget):
         if bar_right > bar_left:
             # Glow effect (thick, transparent)
             glow_color = QColor(0, 255, 255, 40)
-            painter.setPen(QPen(glow_color, 20, Qt.SolidLine, Qt.RoundCap))
+            painter.setPen(QPen(glow_color, 20, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             painter.drawLine(bar_left, center_y, bar_right, center_y)
             
             # Main bar (cyan)
@@ -1603,25 +1603,25 @@ class NeonRetroVUMeter(QWidget):
             x = int(left + norm * (right - left))
             painter.drawLine(x, center_y - 6, x, center_y - 2)
             label = f"{db:+d}" if db > 0 else str(db)
-            painter.drawText(x - 12, center_y - 8, 24, 14, Qt.AlignCenter, label)
+            painter.drawText(x - 12, center_y - 8, 24, 14, Qt.AlignmentFlag.AlignCenter, label)
 
         # Neon needle (pink with glow)
         needle_x = int(left + self.level * (right - left))
         
         # Glow
         glow_color = QColor(255, 0, 200, 60)
-        painter.setPen(QPen(glow_color, 8, Qt.SolidLine, Qt.RoundCap))
+        painter.setPen(QPen(glow_color, 8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         painter.drawLine(needle_x, center_y + 10, needle_x, bottom - 4)
         
         # Main needle
-        painter.setPen(QPen(QColor(255, 0, 200), 2, Qt.SolidLine, Qt.RoundCap))
+        painter.setPen(QPen(QColor(255, 0, 200), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         painter.drawLine(needle_x, center_y + 10, needle_x, bottom - 4)
 
         # Peak hold (white dot with glow)
         if self.peak_hold > 0.02:
             peak_x = int(left + self.peak_hold * (right - left))
             # Glow
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(255, 255, 255, 60))
             painter.drawEllipse(peak_x - 6, center_y - 20, 12, 12)
             # Core
@@ -1649,7 +1649,7 @@ class TubeAmplifierVUMeter(QWidget):
         self.alpha = alpha
 
         # Enable transparency and set background
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.setStyleSheet("background: transparent;")
 
@@ -1657,7 +1657,7 @@ class TubeAmplifierVUMeter(QWidget):
         self.db_max = 6.0
         self.db_values = [-50, -40, -30, -20, -10, 0, 3, 6]
 
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(True)
         pal = self.palette()
         pal.setColor(self.backgroundRole(), QColor(30, 20, 10))
@@ -1691,7 +1691,7 @@ class TubeAmplifierVUMeter(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect()  # Use the full widget area
         # rect = rect.adjusted(8, 8, -8, -8) # Use the less than full widget area
 
@@ -1728,7 +1728,7 @@ class TubeAmplifierVUMeter(QWidget):
         if bar_right > bar_left:
             # Glow
             glow_color = QColor(255, 150, 50, 40)
-            painter.setPen(QPen(glow_color, 30, Qt.SolidLine, Qt.RoundCap))
+            painter.setPen(QPen(glow_color, 30, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             painter.drawLine(bar_left, center_y, bar_right, center_y)
             
             # Main bar (amber gradient)
@@ -1749,24 +1749,24 @@ class TubeAmplifierVUMeter(QWidget):
             x = int(left + norm * (right - left))
             painter.drawLine(x, center_y - 8, x, center_y - 2)
             label = f"{db:+d}" if db > 0 else str(db)
-            painter.drawText(x - 12, center_y - 10, 24, 14, Qt.AlignCenter, label)
+            painter.drawText(x - 12, center_y - 10, 24, 14, Qt.AlignmentFlag.AlignCenter, label)
 
         # Amber needle
         needle_x = int(left + self.level * (right - left))
         
         # Glow
         glow_color = QColor(255, 150, 50, 60)
-        painter.setPen(QPen(glow_color, 8, Qt.SolidLine, Qt.RoundCap))
+        painter.setPen(QPen(glow_color, 8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         painter.drawLine(needle_x, center_y + 8, needle_x, bottom - 4)
         
         # Main needle
-        painter.setPen(QPen(QColor(255, 200, 100), 2, Qt.SolidLine, Qt.RoundCap))
+        painter.setPen(QPen(QColor(255, 200, 100), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         painter.drawLine(needle_x, center_y + 8, needle_x, bottom - 4)
 
         # Peak hold (amber dot)
         if self.peak_hold > 0.02:
             peak_x = int(left + self.peak_hold * (right - left))
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(255, 200, 100, 200))
             painter.drawEllipse(peak_x - 4, center_y - 18, 8, 8)
             # Glow
@@ -1795,7 +1795,7 @@ class ClassicBBCPPM(QWidget):
         self.alpha = alpha
 
         # Enable transparency and set background
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.setStyleSheet("background: transparent;")
 
@@ -1810,7 +1810,7 @@ class ClassicBBCPPM(QWidget):
         ]
         self.ppm_values = [1, 2, 3, 4, 5, 6, 7]
 
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(True)
         pal = self.palette()
         pal.setColor(self.backgroundRole(), QColor(40, 40, 45))
@@ -1851,7 +1851,7 @@ class ClassicBBCPPM(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect() # Use the full widget area
         # rect = self.rect().adjusted(6, 6, -6, -6) # Use the less than full widget area
 
@@ -1930,7 +1930,7 @@ class NordicVUMeter(QWidget):
         self.alpha = alpha
 
         # Enable transparency and set background
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.setStyleSheet("background: transparent;")
 
@@ -1938,7 +1938,7 @@ class NordicVUMeter(QWidget):
         self.db_max = 6.0
         self.db_values = [-50, -40, -30, -20, -10, 0, 3, 6]
 
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(True)
         pal = self.palette()
         pal.setColor(self.backgroundRole(), QColor(245, 242, 235))
@@ -1972,7 +1972,7 @@ class NordicVUMeter(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect() # Use the full widget area
         # rect = self.rect().adjusted(6, 6, -6, -6) # Use the less than full widget area
 
@@ -2030,7 +2030,7 @@ class NordicVUMeter(QWidget):
         # Peak hold (red dot)
         if self.peak_hold > 0.02:
             peak_x = int(meter_rect.left() + self.peak_hold * w)
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(255, 0, 0))
             painter.drawEllipse(peak_x - 3, meter_rect.bottom() + 6, 6, 6)
 
@@ -2049,7 +2049,7 @@ class LEDMatrixBarMeter(QWidget):
         super().__init__(parent)
         self.setMinimumSize(120, 80)
         self.setMaximumHeight(150)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         self.cols = cols              # number of columns (horizontal)
         self.rows = rows              # number of rows (vertical)
@@ -2063,7 +2063,7 @@ class LEDMatrixBarMeter(QWidget):
         self.db_max = 6.0
 
         # Enable transparency
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.setStyleSheet("background: transparent;")
 
@@ -2095,7 +2095,7 @@ class LEDMatrixBarMeter(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect()
 
         # ---- Background ----
@@ -2144,7 +2144,7 @@ class LEDMatrixBarMeter(QWidget):
                     # Glow effect
                     glow_color = QColor(color)
                     glow_color.setAlpha(60)
-                    painter.setPen(Qt.NoPen)
+                    painter.setPen(Qt.PenStyle.NoPen)
                     painter.setBrush(glow_color)
                     painter.drawRect(int(x-1), int(y-1), int(w+2), int(h+2))
 
@@ -2154,7 +2154,7 @@ class LEDMatrixBarMeter(QWidget):
                     painter.drawRect(int(x), int(y), int(w), int(h))
                 else:
                     # Off LED – dark grey
-                    painter.setPen(Qt.NoPen)
+                    painter.setPen(Qt.PenStyle.NoPen)
                     painter.setBrush(QBrush(QColor(30, 30, 35)))
                     painter.drawRect(int(x), int(y), int(w), int(h))
 
@@ -2175,7 +2175,7 @@ class LEDMatrixBarMeter(QWidget):
             # We'll place it on the right edge at the appropriate height.
             peak_x = grid_rect.left() + peak_frac * grid_rect.width()
             peak_y = grid_rect.bottom() - 4   # near the bottom
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(255, 255, 255))
             painter.drawEllipse(int(peak_x-4), int(peak_y-4), 8, 8)
 
@@ -2219,7 +2219,7 @@ class BroadcastStereoVUMeter(QWidget):
         self.segment_count = 32
 
         # Enable transparency
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.setStyleSheet("background: transparent;")
 
@@ -2340,7 +2340,7 @@ class BroadcastStereoVUMeter(QWidget):
 
     def paintEvent(self, event):
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, False)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         r = self.rect()
         p.fillRect(r, QColor(0, 0, 0))
 
@@ -2393,7 +2393,7 @@ class BroadcastStereoVUMeter(QWidget):
             # Draw text directly below the tick mark with no gap
             text = f"+{db}" if db > 0 else str(db)
             # Position text right below the tick mark
-            p.drawText(int(x) - 12, y, 30, 12, Qt.AlignCenter, text)
+            p.drawText(int(x) - 12, y, 30, 12, Qt.AlignmentFlag.AlignCenter, text)
 
         # -------------------------------------------------
         # Top tick marks
@@ -2454,7 +2454,7 @@ def create_vu_meter(index, parent=None):
         pal = w.palette()
         pal.setColor(w.backgroundRole(), QColor(30, 30, 30))
         w.setPalette(pal)
-        w.setAttribute(Qt.WA_TranslucentBackground, False)
+        w.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         w.setStyleSheet("")
     else:
         w = widget_cls(parent, alpha=alpha)
@@ -2463,5 +2463,5 @@ def create_vu_meter(index, parent=None):
         w.setMinimumWidth(min_width)
     w.setMaximumWidth(16777215)
     w.setMinimumHeight(80)
-    w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
     return w

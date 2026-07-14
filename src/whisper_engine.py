@@ -17,7 +17,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
 # ----------------------------------------------------------------------
 # Model catalogue

@@ -1,5 +1,5 @@
 # Core
-PyQt5>=5.15
+PyQt6>=6.6
 numpy>=1.24
 miniaudio>=1.71    # self-contained audio capture -- no system PortAudio/ALSA-dev needed
 soundfile>=0.12

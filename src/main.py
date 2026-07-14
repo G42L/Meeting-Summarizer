@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Meeting Transcriber - PyQt5 GUI
+Meeting Transcriber - PyQt6 GUI
 Records audio from one or more sources at once (mic + Teams/system-audio
 loopback + ...), mixes them in real time via AudioMixerEngine, transcribes
 the mix with Whisper, and summarizes with a local LLM.
@@ -24,17 +24,17 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from PyQt5.QtWidgets import (
+from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QComboBox, QPushButton, QTextEdit, QProgressBar,
     QGroupBox, QFileDialog, QMessageBox, QCheckBox, QSizePolicy, QSlider,
     QPlainTextEdit, QListWidget, QListWidgetItem, QLineEdit, QDialog,
-    QDialogButtonBox, QSystemTrayIcon, QMenu, QShortcut, QFrame,
+    QDialogButtonBox, QSystemTrayIcon, QMenu, QFrame,
     QGraphicsDropShadowEffect
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QSettings, QPropertyAnimation, QEasingCurve, QPoint, QSize, QUrl, QEvent
-from PyQt5.QtGui import QIcon, QFont, QKeySequence, QCursor, QPixmap, QPainter, QColor, QPalette, QTextDocument
-from PyQt5.QtSvg import QSvgRenderer
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QSettings, QPropertyAnimation, QEasingCurve, QPoint, QSize, QUrl, QEvent
+from PyQt6.QtGui import QIcon, QFont, QKeySequence, QCursor, QPixmap, QPainter, QColor, QPalette, QTextDocument, QShortcut
+from PyQt6.QtSvg import QSvgRenderer
 
 from . import audio_engine
 from . import vu_meters
@@ -60,10 +60,10 @@ def themed_icon(name, color, size=18):
     """
     renderer = QSvgRenderer(os.path.join(ICONS_DIR, f"{name}.svg"))
     pixmap = QPixmap(QSize(size, size))
-    pixmap.fill(Qt.transparent)
+    pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     renderer.render(painter)
-    painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
     painter.fillRect(pixmap.rect(), color)
     painter.end()
     return QIcon(pixmap)
@@ -260,7 +260,7 @@ class FlatIconButton(QPushButton):
         super().__init__(parent)
         self.setIconSize(QSize(size, size))
         self.setFixedSize(size + 8, size + 8)
-        self.setCursor(Qt.PointingHandCursor)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(
             "QPushButton { border: none; background: transparent; padding: 0px; }"
             "QPushButton:hover { border: none; background: transparent; }"
@@ -284,7 +284,7 @@ class HoverColorIconButton(FlatIconButton):
         """Re-renders the non-hovered icon against the current palette's
         text color (or the fixed normal_color if one was given) -- call
         this if the palette changes after construction."""
-        color = self._normal_color or self.palette().color(QPalette.WindowText)
+        color = self._normal_color or self.palette().color(QPalette.ColorRole.WindowText)
         self._normal_icon = themed_icon(self._icon_name, QColor(color) if isinstance(color, str) else color, self.iconSize().width())
         self.setIcon(self._normal_icon)
 
@@ -336,13 +336,13 @@ class MuteButton(FlatIconButton):
         self._update_icon()
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self._long_press_fired = False
             self._long_press_timer.start()
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self._long_press_timer.stop()
             if not self._long_press_fired and self.rect().contains(event.pos()):
                 self._set_mode("short" if self._mode == "none" else "none")
@@ -397,7 +397,7 @@ class SourceRow(QWidget):
         layout.addWidget(label, stretch=2)
 
         layout.addWidget(QLabel("Gain:"))
-        self.gain_slider = QSlider(Qt.Horizontal)
+        self.gain_slider = QSlider(Qt.Orientation.Horizontal)
         self.gain_slider.setRange(0, 200)  # percent
         self.gain_slider.setValue(100)
         self.gain_slider.setMaximumWidth(110)
@@ -512,9 +512,9 @@ class TranscriptReviewDialog(QDialog):
         layout.addWidget(self.text_edit)
 
         buttons = QDialogButtonBox()
-        continue_btn = buttons.addButton("Continue", QDialogButtonBox.AcceptRole)
-        cancel_btn = buttons.addButton("Cancel Job", QDialogButtonBox.RejectRole)
-        text_color = self.palette().color(QPalette.WindowText)
+        continue_btn = buttons.addButton("Continue", QDialogButtonBox.ButtonRole.AcceptRole)
+        cancel_btn = buttons.addButton("Cancel Job", QDialogButtonBox.ButtonRole.RejectRole)
+        text_color = self.palette().color(QPalette.ColorRole.WindowText)
         continue_btn.setIcon(themed_icon("check-circle-outside", text_color))
         cancel_btn.setIcon(themed_icon("cross-circle", text_color))
         continue_btn.setProperty("cls", "primary")
@@ -557,7 +557,7 @@ class HistorySidebar(QWidget):
         outer.setSpacing(0)
 
         content = QFrame()
-        content.setFrameShape(QFrame.StyledPanel)
+        content.setFrameShape(QFrame.Shape.StyledPanel)
         content.setAutoFillBackground(True)
         content_layout = QVBoxLayout(content)
 
@@ -584,13 +584,13 @@ class HistorySidebar(QWidget):
         outer.addWidget(content, stretch=1)
 
         handle = QFrame()
-        handle.setFrameShape(QFrame.StyledPanel)
+        handle.setFrameShape(QFrame.Shape.StyledPanel)
         handle.setAutoFillBackground(True)
         handle.setFixedWidth(self.HANDLE_WIDTH)
         handle_layout = QVBoxLayout(handle)
         handle_layout.setContentsMargins(0, 8, 0, 0)
         self.handle_label = QLabel()
-        self.handle_label.setAlignment(Qt.AlignHCenter)
+        self.handle_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         handle_layout.addWidget(self.handle_label)
         handle_layout.addStretch()
         outer.addWidget(handle)
@@ -607,7 +607,7 @@ class HistorySidebar(QWidget):
 
         self._animation = QPropertyAnimation(self, b"pos", self)
         self._animation.setDuration(self.ANIMATION_MS)
-        self._animation.setEasingCurve(QEasingCurve.OutCubic)
+        self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         # Polling the real cursor position instead of relying on
         # enterEvent/leaveEvent: Qt's enter/leave delivery for a raised,
@@ -819,7 +819,7 @@ class MainWindow(QMainWindow):
         self.hf_token_label.setEnabled(False)
         options_layout.addWidget(self.hf_token_label)
         self.hf_token_edit = QLineEdit()
-        self.hf_token_edit.setEchoMode(QLineEdit.Password)
+        self.hf_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.hf_token_edit.setPlaceholderText("hf_...")
         self.hf_token_edit.setEnabled(False)
         options_layout.addWidget(self.hf_token_edit, stretch=1)
@@ -1066,7 +1066,7 @@ class MainWindow(QMainWindow):
         self.tray_icon.show()
 
     def _on_tray_activated(self, reason):
-        if reason == QSystemTrayIcon.Trigger:  # single left-click
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:  # single left-click
             self.toggle_window_visibility()
 
     def toggle_window_visibility(self):
@@ -1083,7 +1083,7 @@ class MainWindow(QMainWindow):
         # would need a new cross-platform dependency and doesn't reliably
         # work on Wayland anyway), just "works anywhere in this app".
         self.record_shortcut = QShortcut(QKeySequence("Ctrl+Alt+R"), self)
-        self.record_shortcut.setContext(Qt.ApplicationShortcut)
+        self.record_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         self.record_shortcut.activated.connect(self.toggle_recording)
         self.record_btn.setToolTip("Start/stop recording (Ctrl+Alt+R)")
 
@@ -1094,7 +1094,7 @@ class MainWindow(QMainWindow):
         """themed_icon(), cached per (name, size, current text color) so
         repeated calls (e.g. rebuilding the source picker) don't re-render
         the same SVG over and over."""
-        color = self.palette().color(QPalette.WindowText)
+        color = self.palette().color(QPalette.ColorRole.WindowText)
         key = (name, size, color.rgba())
         if key not in self._icon_cache:
             self._icon_cache[key] = themed_icon(name, color, size)
@@ -1124,7 +1124,7 @@ class MainWindow(QMainWindow):
 
     def changeEvent(self, event):
         super().changeEvent(event)
-        if event.type() == QEvent.PaletteChange:
+        if event.type() == QEvent.Type.PaletteChange:
             self._icon_cache.clear()
             # A refresher can point at a widget that no longer exists
             # (e.g. a removed SourceRow) -- that's a real case, not
@@ -1204,7 +1204,7 @@ class MainWindow(QMainWindow):
         for icon_name in set(LOG_ICONS.values()):
             color = QColor(LOG_ICON_COLORS[icon_name])
             pixmap = themed_icon(icon_name, color, size=14).pixmap(14, 14)
-            document.addResource(QTextDocument.ImageResource, QUrl(icon_name), pixmap)
+            document.addResource(QTextDocument.ResourceType.ImageResource, QUrl(icon_name), pixmap)
 
     def closeEvent(self, event):
         self._save_prompt_style_settings()
@@ -1577,7 +1577,7 @@ class MainWindow(QMainWindow):
                 display = f"{info['name']} ({info['disk_size']} disk, {info['mem_usage']} mem) {status}"
                 self.whisper_combo.addItem(display)
                 idx = self.whisper_combo.count() - 1
-                self.whisper_combo.setItemData(idx, info, Qt.UserRole)
+                self.whisper_combo.setItemData(idx, info, Qt.ItemDataRole.UserRole)
                 tooltip = (f"Model: {info['name']}\n"
                            f"Disk: {info['disk_size']}\n"
                            f"Memory: {info['mem_usage']}\n"
@@ -1586,12 +1586,12 @@ class MainWindow(QMainWindow):
                            f"Accuracy: {info['accuracy']}\n"
                            f"Usage: {info['usage']}\n"
                            f"Status: {'Downloaded' if info['downloaded'] else 'Not downloaded'}")
-                self.whisper_combo.setItemData(idx, tooltip, Qt.ToolTipRole)
+                self.whisper_combo.setItemData(idx, tooltip, Qt.ItemDataRole.ToolTipRole)
 
             default_name = whisper_engine.pick_default_model(models_info)
             default_index = 0
             for i in range(self.whisper_combo.count()):
-                info = self.whisper_combo.itemData(i, Qt.UserRole)
+                info = self.whisper_combo.itemData(i, Qt.ItemDataRole.UserRole)
                 if info and info["name"] == default_name:
                     default_index = i
                     break
@@ -1659,7 +1659,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_downloading') and self._downloading:
             return
 
-        info = self.whisper_combo.itemData(index, Qt.UserRole)
+        info = self.whisper_combo.itemData(index, Qt.ItemDataRole.UserRole)
         if not isinstance(info, dict):
             text = self.whisper_combo.currentText()
             model_name = text.split()[0] if text else "unknown"
@@ -1674,18 +1674,18 @@ class MainWindow(QMainWindow):
             f"The model '{info['name']}' is not present on disk.\n"
             f"Disk size: {info['disk_size']}, Memory: {info['mem_usage']}\n\n"
             "Do you want to download it now?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes
         )
-        if reply == QMessageBox.Yes:
+        if reply == QMessageBox.StandardButton.Yes:
             self.download_model(info["name"])
         else:
-            all_infos = [self.whisper_combo.itemData(i, Qt.UserRole) for i in range(self.whisper_combo.count())]
+            all_infos = [self.whisper_combo.itemData(i, Qt.ItemDataRole.UserRole) for i in range(self.whisper_combo.count())]
             all_infos = [i for i in all_infos if isinstance(i, dict)]
             revert_name = whisper_engine.pick_default_model(all_infos) if all_infos else None
 
             target_index = None
             for i in range(self.whisper_combo.count()):
-                info2 = self.whisper_combo.itemData(i, Qt.UserRole)
+                info2 = self.whisper_combo.itemData(i, Qt.ItemDataRole.UserRole)
                 if isinstance(info2, dict) and info2.get("name") == revert_name and info2.get("downloaded", False):
                     target_index = i
                     break
@@ -1764,14 +1764,14 @@ class MainWindow(QMainWindow):
             if success:
                 self.append_log(f"✅ Model '{model_name}' is now available.")
                 for i in range(self.whisper_combo.count()):
-                    info = self.whisper_combo.itemData(i, Qt.UserRole)
+                    info = self.whisper_combo.itemData(i, Qt.ItemDataRole.UserRole)
                     if info and info["name"] == model_name:
                         self.whisper_combo.setCurrentIndex(i)
                         break
             else:
                 self.append_log(f"❌ Download of '{model_name}' failed. Please download manually.")
                 for i in range(self.whisper_combo.count()):
-                    info = self.whisper_combo.itemData(i, Qt.UserRole)
+                    info = self.whisper_combo.itemData(i, Qt.ItemDataRole.UserRole)
                     if info and info["downloaded"]:
                         self.whisper_combo.setCurrentIndex(i)
                         break
@@ -1783,7 +1783,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _add_job_from_audio(self, audio_file_path, output_dir=None):
         current_idx = self.whisper_combo.currentIndex()
-        item_data = self.whisper_combo.itemData(current_idx, Qt.UserRole)
+        item_data = self.whisper_combo.itemData(current_idx, Qt.ItemDataRole.UserRole)
         whisper_model = item_data["name"] if item_data and "name" in item_data else self.whisper_combo.currentText().split()[0]
 
         backend_name = self.backend_combo.currentText()
@@ -1859,7 +1859,7 @@ class MainWindow(QMainWindow):
         if processor is None:
             return  # job finished/cancelled before the dialog could open
         dialog = TranscriptReviewDialog(transcript, self)
-        if dialog.exec_() == QDialog.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             processor.review_result = dialog.text()
         else:
             processor.review_cancelled = True
@@ -2021,7 +2021,7 @@ class MainWindow(QMainWindow):
             if session["summary_snippet"]:
                 text += f"  —  {session['summary_snippet']}"
             item = QListWidgetItem(text)
-            item.setData(Qt.UserRole, session)
+            item.setData(Qt.ItemDataRole.UserRole, session)
             self.history_sidebar.list_widget.addItem(item)
 
     def open_selected_history_folder(self):
@@ -2029,11 +2029,11 @@ class MainWindow(QMainWindow):
         if item is None:
             QMessageBox.information(self, "No selection", "Select a session first.")
             return
-        session = item.data(Qt.UserRole)
+        session = item.data(Qt.ItemDataRole.UserRole)
         self._open_path(str(session["folder"]))
 
     def open_history_summary(self, item):
-        session = item.data(Qt.UserRole)
+        session = item.data(Qt.ItemDataRole.UserRole)
         if not session["md_path"]:
             QMessageBox.information(self, "No summary", "This session has no summary.md (the job may not have completed).")
             return
@@ -2053,31 +2053,29 @@ def _dark_palette():
     """Same color values already used (and visually verified via screenshots
     throughout development) to simulate a dark OS theme for testing."""
     palette = QPalette()
-    palette.setColor(QPalette.Window, QColor(45, 45, 48))
-    palette.setColor(QPalette.WindowText, QColor(230, 230, 230))
-    palette.setColor(QPalette.Base, QColor(30, 30, 30))
-    palette.setColor(QPalette.AlternateBase, QColor(45, 45, 48))
-    palette.setColor(QPalette.Text, QColor(230, 230, 230))
-    palette.setColor(QPalette.Button, QColor(60, 60, 63))
-    palette.setColor(QPalette.ButtonText, QColor(230, 230, 230))
-    palette.setColor(QPalette.Highlight, QColor(80, 140, 220))
-    palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
-    palette.setColor(QPalette.Mid, QColor(90, 90, 95))
-    palette.setColor(QPalette.Light, QColor(75, 75, 80))
-    palette.setColor(QPalette.Dark, QColor(20, 20, 20))
-    palette.setColor(QPalette.Midlight, QColor(70, 70, 75))
+    palette.setColor(QPalette.ColorRole.Window, QColor(45, 45, 48))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(230, 230, 230))
+    palette.setColor(QPalette.ColorRole.Base, QColor(30, 30, 30))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(45, 45, 48))
+    palette.setColor(QPalette.ColorRole.Text, QColor(230, 230, 230))
+    palette.setColor(QPalette.ColorRole.Button, QColor(60, 60, 63))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(230, 230, 230))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(80, 140, 220))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+    palette.setColor(QPalette.ColorRole.Mid, QColor(90, 90, 95))
+    palette.setColor(QPalette.ColorRole.Light, QColor(75, 75, 80))
+    palette.setColor(QPalette.ColorRole.Dark, QColor(20, 20, 20))
+    palette.setColor(QPalette.ColorRole.Midlight, QColor(70, 70, 75))
     return palette
 
 
 def apply_linux_color_scheme(app):
     """
-    Qt5 has no built-in cross-desktop API for "what's the current OS
-    light/dark preference" (unlike Qt 6.5+'s QStyleHints.colorScheme()) --
-    it only reflects whatever a platform theme integration plugin (qt5ct,
-    qgnomeplatform, KDE's native integration, ...) tells it, and most
-    Linux setups don't have one configured, so Qt5 apps default to a
-    static light palette regardless of the OS setting. This queries the
-    standardized XDG Desktop Portal instead (org.freedesktop.portal.
+    Even on Qt 6.5+, QStyleHints.colorScheme() only reflects whatever
+    platform theme integration plugin (qt5ct, qgnomeplatform, KDE's native
+    integration, ...) is configured, and most Linux setups don't have one,
+    so apps default to a static light palette regardless of the OS setting.
+    This queries the standardized XDG Desktop Portal instead (org.freedesktop.portal.
     Settings, supported by GNOME/KDE and, via xdg-desktop-portal-cosmic,
     COSMIC too), which is desktop-environment-agnostic.
 
@@ -2094,7 +2092,7 @@ def apply_linux_color_scheme(app):
     if not sys.platform.startswith("linux"):
         return
     try:
-        from PyQt5.QtDBus import QDBusConnection, QDBusInterface
+        from PyQt6.QtDBus import QDBusConnection, QDBusInterface
 
         bus = QDBusConnection.sessionBus()
         if not bus.isConnected():
@@ -2153,7 +2151,7 @@ def main():
     apply_linux_color_scheme(app)
     win = MainWindow()
     win.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

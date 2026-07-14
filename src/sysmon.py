@@ -1,6 +1,6 @@
 """
 sysmon.py - CPU/RAM/GPU/VRAM sampling for the System monitor panel.
-Pure Python, no PyQt5 import -- main.py is the only thing that turns these
+Pure Python, no PyQt6 import -- main.py is the only thing that turns these
 numbers into widgets (same boundary as audio_engine.py/whisper_engine.py).
 
 GPU support is best-effort and platform-dependent:

@@ -113,7 +113,7 @@ def test_source_row_relays_mute_mode_as_muted_and_full_mute_flags():
 # ---------------------------------------------------------------------
 
 def test_themed_icon_returns_non_null_icon():
-    from PyQt5.QtGui import QColor
+    from PyQt6.QtGui import QColor
     icon = main.themed_icon("check-circle-outside", QColor("#1e8e3e"), size=16)
     assert not icon.isNull()
     pixmap = icon.pixmap(16, 16)
@@ -138,16 +138,17 @@ def test_log_icon_svg_files_exist_on_disk():
 # ---------------------------------------------------------------------
 
 def test_hover_color_icon_button_swaps_icon_on_hover():
-    from PyQt5.QtCore import QEvent
+    from PyQt6.QtCore import QEvent, QPointF
+    from PyQt6.QtGui import QEnterEvent
 
     btn = main.HoverColorIconButton("cross-circle", hover_color="#d93025")
     normal_icon = btn.icon()
 
-    btn.enterEvent(QEvent(QEvent.Enter))
+    btn.enterEvent(QEnterEvent(QPointF(0, 0), QPointF(0, 0), QPointF(0, 0)))
     hover_icon = btn.icon()
     assert hover_icon.cacheKey() != normal_icon.cacheKey()
 
-    btn.leaveEvent(QEvent(QEvent.Leave))
+    btn.leaveEvent(QEvent(QEvent.Type.Leave))
     assert btn.icon().cacheKey() == normal_icon.cacheKey()
 
 
@@ -269,7 +270,7 @@ def test_prompt_style_combo_lives_inside_llm_group(main_window):
 #
 # Two independent bugs lived here: our baked icon *bitmaps* (themed_icon()/
 # MainWindow._icon()) never got re-rendered on a theme flip, since nothing
-# listened for QEvent.PaletteChange; and, less obviously, BASE_STYLESHEET's
+# listened for QEvent.Type.PaletteChange; and, less obviously, BASE_STYLESHEET's
 # palette(...) references turned out NOT to re-evaluate live despite
 # looking dynamic -- Qt's QSS engine caches the resolved color per widget
 # and only recomputes it on an explicit repolish (verified directly via
@@ -297,17 +298,17 @@ def _first_opaque_pixel_color(icon, size=18):
 
 
 def test_icon_refreshes_on_palette_change(main_window):
-    from PyQt5.QtCore import QEvent
-    from PyQt5.QtGui import QColor, QPalette
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtGui import QColor, QPalette
 
     win = main_window
     old_icon = win.load_btn.icon()
 
     new_color = QColor(10, 200, 10)  # distinct from whatever the default was
     new_palette = QPalette(win.palette())
-    new_palette.setColor(QPalette.WindowText, new_color)
+    new_palette.setColor(QPalette.ColorRole.WindowText, new_color)
     win.setPalette(new_palette)
-    win.changeEvent(QEvent(QEvent.PaletteChange))
+    win.changeEvent(QEvent(QEvent.Type.PaletteChange))
 
     new_icon = win.load_btn.icon()
     assert new_icon.cacheKey() != old_icon.cacheKey()
@@ -317,17 +318,17 @@ def test_icon_refreshes_on_palette_change(main_window):
 
 
 def test_record_btn_icon_survives_palette_change_while_recording(main_window):
-    from PyQt5.QtCore import QEvent
-    from PyQt5.QtGui import QColor, QPalette
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtGui import QColor, QPalette
 
     win = main_window
     win._record_icon_name = "stop-circle"  # simulate the mid-recording state
     win.record_btn.setIcon(win._icon("stop-circle"))
 
     new_palette = QPalette(win.palette())
-    new_palette.setColor(QPalette.WindowText, QColor(5, 5, 5))
+    new_palette.setColor(QPalette.ColorRole.WindowText, QColor(5, 5, 5))
     win.setPalette(new_palette)
-    win.changeEvent(QEvent(QEvent.PaletteChange))
+    win.changeEvent(QEvent(QEvent.Type.PaletteChange))
 
     assert win._record_icon_name == "stop-circle"
     expected_image = win._icon("stop-circle").pixmap(18, 18).toImage()
@@ -342,9 +343,9 @@ def test_stylesheet_button_color_updates_on_palette_change(main_window):
     it. Without MainWindow._repolish_widget_tree(), this stayed stuck on
     whatever color was resolved the first time the stylesheet was
     applied."""
-    from PyQt5.QtCore import QEvent
-    from PyQt5.QtGui import QColor, QPalette
-    from PyQt5.QtWidgets import QApplication
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtGui import QColor, QPalette
+    from PyQt6.QtWidgets import QApplication
 
     win = main_window
     win.show()
@@ -358,10 +359,10 @@ def test_stylesheet_button_color_updates_on_palette_change(main_window):
         # (app.setPalette(...)), unlike the icon-refresh tests above which
         # only need the widget's own palette.
         new_palette = QPalette(app.palette())
-        new_palette.setColor(QPalette.Button, QColor(1, 222, 3))
-        new_palette.setColor(QPalette.ButtonText, QColor(0, 0, 0))
+        new_palette.setColor(QPalette.ColorRole.Button, QColor(1, 222, 3))
+        new_palette.setColor(QPalette.ColorRole.ButtonText, QColor(0, 0, 0))
         app.setPalette(new_palette)
-        win.changeEvent(QEvent(QEvent.PaletteChange))
+        win.changeEvent(QEvent(QEvent.Type.PaletteChange))
         app.processEvents()
 
         # A few pixels in from the left edge, away from the rounded corner
@@ -373,7 +374,7 @@ def test_stylesheet_button_color_updates_on_palette_change(main_window):
         assert (fill.red(), fill.green(), fill.blue()) == (1, 222, 3)
     finally:
         app.setPalette(original_palette)
-        win.changeEvent(QEvent(QEvent.PaletteChange))
+        win.changeEvent(QEvent(QEvent.Type.PaletteChange))
 
 
 # ---------------------------------------------------------------------
@@ -395,7 +396,7 @@ def test_log_stays_pinned_to_bottom_as_lines_are_appended(main_window):
     win = main_window
     win.show()
     win.resize(900, 950)
-    from PyQt5.QtWidgets import QApplication
+    from PyQt6.QtWidgets import QApplication
     QApplication.instance().processEvents()
 
     scrollbar = win.log_text.verticalScrollBar()
@@ -412,7 +413,7 @@ def test_log_does_not_yank_view_back_down_after_manual_scroll_up(main_window):
     win = main_window
     win.show()
     win.resize(900, 950)
-    from PyQt5.QtWidgets import QApplication
+    from PyQt6.QtWidgets import QApplication
     QApplication.instance().processEvents()
 
     scrollbar = win.log_text.verticalScrollBar()
@@ -433,9 +434,9 @@ def test_log_does_not_yank_view_back_down_after_manual_scroll_up(main_window):
 
 
 def test_removed_source_row_refresher_pruned_without_breaking_others(main_window):
-    from PyQt5 import sip
-    from PyQt5.QtCore import QEvent
-    from PyQt5.QtGui import QColor, QPalette
+    from PyQt6 import sip
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtGui import QColor, QPalette
 
     win = main_window
     row_a = main.SourceRow("a", "a", icon=win._icon("mic"))
@@ -449,9 +450,9 @@ def test_removed_source_row_refresher_pruned_without_breaking_others(main_window
                         # like a removed SourceRow -- not just gone out of scope
 
     new_palette = QPalette(win.palette())
-    new_palette.setColor(QPalette.WindowText, QColor(1, 2, 3))
+    new_palette.setColor(QPalette.ColorRole.WindowText, QColor(1, 2, 3))
     win.setPalette(new_palette)
-    win.changeEvent(QEvent(QEvent.PaletteChange))  # must not raise
+    win.changeEvent(QEvent(QEvent.Type.PaletteChange))  # must not raise
 
     assert not row_b.icon_label.pixmap().isNull()
     assert not row_b.remove_btn.icon().isNull()
@@ -485,8 +486,8 @@ def _spy_on_set_palette(app, monkeypatch):
 
 
 def test_apply_linux_color_scheme_noop_when_dbus_not_connected(monkeypatch):
-    from PyQt5.QtDBus import QDBusConnection
-    from PyQt5.QtWidgets import QApplication
+    from PyQt6.QtDBus import QDBusConnection
+    from PyQt6.QtWidgets import QApplication
 
     app = QApplication.instance()
     monkeypatch.setattr(main.sys, "platform", "linux")
@@ -504,7 +505,7 @@ def test_apply_linux_color_scheme_noop_when_dbus_not_connected(monkeypatch):
 
 
 def test_apply_linux_color_scheme_is_noop_on_non_linux(monkeypatch):
-    from PyQt5.QtWidgets import QApplication
+    from PyQt6.QtWidgets import QApplication
 
     app = QApplication.instance()
     monkeypatch.setattr(main.sys, "platform", "darwin")
@@ -525,9 +526,9 @@ def test_apply_linux_color_scheme_detects_dark_via_portal(monkeypatch):
     test inherently non-portable: it failed the moment it ran on any
     other machine/CI environment without that same portal configuration.
     """
-    from PyQt5 import QtDBus
-    from PyQt5.QtGui import QPalette
-    from PyQt5.QtWidgets import QApplication
+    from PyQt6 import QtDBus
+    from PyQt6.QtGui import QPalette
+    from PyQt6.QtWidgets import QApplication
 
     app = QApplication.instance()
     monkeypatch.setattr(main.sys, "platform", "linux")
@@ -559,7 +560,7 @@ def test_apply_linux_color_scheme_detects_dark_via_portal(monkeypatch):
 
     try:
         main.apply_linux_color_scheme(app)
-        window_text = app.palette().color(QPalette.WindowText)
+        window_text = app.palette().color(QPalette.ColorRole.WindowText)
         assert (window_text.red(), window_text.green(), window_text.blue()) == (230, 230, 230)
     finally:
         app.setPalette(original_palette)

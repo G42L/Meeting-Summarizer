@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from collections import deque
 
-from PyQt5.QtCore import QObject, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from . import whisper_engine
 from . import llm_backend

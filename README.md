@@ -20,7 +20,7 @@ A beautiful native Linux desktop client for Ollama.
 
 </p>
 
-A cross‑platform desktop application built with PyQt5 that records **one or more audio sources at once** (microphone, MS Teams / system audio, a second mic, …), mixes them live into a single stream, transcribes it with Whisper, and generates a structured summary using a local large language model (LLM). All files are saved in timestamped folders under `./transcripts/`.
+A cross‑platform desktop application built with PyQt6 that records **one or more audio sources at once** (microphone, MS Teams / system audio, a second mic, …), mixes them live into a single stream, transcribes it with Whisper, and generates a structured summary using a local large language model (LLM). All files are saved in timestamped folders under `./transcripts/`.
 
 | Light Theme | Dark Theme |
 |------------|------------|
@@ -97,7 +97,7 @@ src/
 └── icons/ui/             Bundled SVG icon set used throughout the UI
 ```
 
-Each file can be read (and modified) on its own — `audio_engine.py` doesn't know anything about Qt widgets, `vu_meters.py` doesn't know anything about audio capture, etc. Only `main.py` (and `vu_meters.py`, for the widgets it defines) import PyQt5; every other module is plain, Qt-agnostic Python.
+Each file can be read (and modified) on its own — `audio_engine.py` doesn't know anything about Qt widgets, `vu_meters.py` doesn't know anything about audio capture, etc. Only `main.py` (and `vu_meters.py`, for the widgets it defines) import PyQt6; every other module is plain, Qt-agnostic Python.
 
 Run the app as a module so its internal relative imports resolve correctly:
 ```bash
@@ -186,7 +186,7 @@ This is the one part of the app that genuinely differs by operating system, beca
     pip install -r requirements.txt
     ```
 
-    This installs PyQt5, numpy, [`miniaudio`](https://pypi.org/project/miniaudio/) (audio capture — ships as a self-contained wheel, no system PortAudio/ALSA-dev package needed on any OS), soundfile, and requests.
+    This installs PyQt6, numpy, [`miniaudio`](https://pypi.org/project/miniaudio/) (audio capture — ships as a self-contained wheel, no system PortAudio/ALSA-dev package needed on any OS), soundfile, and requests.
 
     If you want to use the faster‑whisper backend (recommended for ease of use), also install:
     ```bash
@@ -506,7 +506,7 @@ version = "1.0.0"
 description = "My awesome application"
 dependencies = [
     "numpy",
-    "PyQt5"
+    "PyQt6"
 ]
 
 [project.scripts]
