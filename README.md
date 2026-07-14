@@ -281,8 +281,26 @@ Once the LLM server is running, click the "Refresh" button next to the Backend d
 Right below the LLM Backend/Model row, a **Style** dropdown controls the prompt sent to the LLM:
 
 * **Standard Minutes** – a general summary with key points, decisions, and action items (the default).
+    > **Preset:**
+    > ```
+    > "Summarize the following meeting transcript. "
+    > "Provide a concise summary with key points, decisions, and action items.> \n\n"
+    > "Transcript:\n{transcript}"
+    > ```
 * **Action Items Only** – just a bullet list of action items and owners, no other summary text.
+    >** Preset:**
+    > ```
+    > "From the following meeting transcript, extract only the action items "
+    > "as a bullet list, including an owner if one is mentioned. Do not include "
+    > "any other summary text.\n\nTranscript:\n{transcript}"
+    > ```
 * **Executive Digest** – a single concise paragraph covering only the most important decision or outcome.
+    > **Preset:**
+    > ```
+    > "Write a single concise paragraph (executive digest) of the following "
+    > "meeting transcript, covering only the single most important decision "
+    > "or outcome.\n\nTranscript:\n{transcript}"
+    > ```
 * **Custom...** – reveals a text box where you write your own prompt. It must include the literal placeholder `{transcript}` where the transcript should be inserted.
 
 The selected style (and your custom prompt text, if any) is remembered across restarts.
@@ -644,11 +662,11 @@ For further help, please open an issue on the project repository.
 
 # License
 
-LinOllama is free software licensed under the GNU General Public License v3.0 (GPL-3.0-only).
+Meeting Transcriber is free software licensed under the GNU General Public License v3.0 (GPL-3.0-only).
 
 You are free to use, study, modify, and redistribute this software under the terms of the GNU GPL version 3.
 
-Any distributed modified version or derivative work of LinOllama must also be licensed under GPLv3 and the corresponding source code must be made available.
+Any distributed modified version or derivative work of Meeting Transcriber must also be licensed under GPLv3 and the corresponding source code must be made available.
 
 See the LICENSE file for the complete license text.
 
