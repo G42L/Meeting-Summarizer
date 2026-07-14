@@ -2073,6 +2073,16 @@ def _dark_palette():
     palette.setColor(QPalette.ColorRole.Light, QColor(75, 75, 80))
     palette.setColor(QPalette.ColorRole.Dark, QColor(20, 20, 20))
     palette.setColor(QPalette.ColorRole.Midlight, QColor(70, 70, 75))
+    # setColor(role, color) above applies to every QPalette::ColorGroup,
+    # Disabled included -- without overriding Disabled explicitly here,
+    # setEnabled(False) widgets (the HF token field, greyed-out "already
+    # added" source picker entries, ...) render with the exact same text
+    # color as enabled ones under this palette, silently losing the
+    # greyed-out look those features depend on.
+    disabled = QPalette.ColorGroup.Disabled
+    palette.setColor(disabled, QPalette.ColorRole.WindowText, QColor(120, 120, 123))
+    palette.setColor(disabled, QPalette.ColorRole.Text, QColor(120, 120, 123))
+    palette.setColor(disabled, QPalette.ColorRole.ButtonText, QColor(120, 120, 123))
     return palette
 
 

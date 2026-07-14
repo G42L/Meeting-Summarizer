@@ -569,6 +569,102 @@ def test_apply_linux_color_scheme_detects_dark_via_portal(monkeypatch):
 
 
 # ---------------------------------------------------------------------
+# _dark_palette's Disabled color group -- setColor(role, color) with no
+# explicit ColorGroup applies to every group at once, so without
+# overriding Disabled separately, setEnabled(False) widgets silently stop
+# looking greyed-out the moment this palette is active (regression: the
+# HF token field and "already added" source picker entries rendered
+# identically whether enabled or disabled).
+# ---------------------------------------------------------------------
+
+def test_dark_palette_disabled_text_is_dimmer_than_active():
+    from PyQt6.QtGui import QPalette
+
+    palette = main._dark_palette()
+    active = palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.WindowText)
+    disabled = palette.color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText)
+    assert disabled != active
+
+    for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text, QPalette.ColorRole.ButtonText):
+        assert palette.color(QPalette.ColorGroup.Disabled, role) != palette.color(QPalette.ColorGroup.Active, role)
+
+
+def test_hf_token_field_visibly_greys_out_under_dark_palette(main_window, monkeypatch):
+    """
+    Reproduces the actual bug: isEnabled() toggling correctly was never
+    the problem, the rendered color not changing was. Applies the real
+    dark palette to the app (as apply_linux_color_scheme does on a
+    dark-mode Linux desktop) and asserts the HF token label's resolved
+    text color actually differs between the disabled and enabled states.
+    """
+    from PyQt6.QtGui import QPalette
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    original_palette = QPalette(app.palette())
+    try:
+        app.setPalette(main._dark_palette())
+
+        win = main_window
+        assert win.hf_token_label.isEnabled() is False
+        assert win.hf_token_edit.isEnabled() is False
+        color_disabled = win.hf_token_label.palette().color(QPalette.ColorRole.WindowText)
+
+        win.diarization_check.setChecked(True)
+        assert win.hf_token_label.isEnabled() is True
+        assert win.hf_token_edit.isEnabled() is True
+        color_enabled = win.hf_token_label.palette().color(QPalette.ColorRole.WindowText)
+
+        assert color_disabled != color_enabled
+
+        win.diarization_check.setChecked(False)
+        assert win.hf_token_label.isEnabled() is False
+        assert win.hf_token_edit.isEnabled() is False
+    finally:
+        app.setPalette(original_palette)
+
+
+def test_source_picker_greys_out_already_added_device_under_dark_palette(main_window, monkeypatch):
+    """
+    Same regression as the HF token field, but for the "Add source"
+    combo's already-added entries. Qt's item views paint a disabled item
+    using QPalette::Disabled rather than any per-item color, so there's
+    nothing to read off the QStandardItem itself -- the real assertion is
+    that (a) refresh_source_picker() still flips ItemIsEnabled correctly
+    on add/remove, and (b) the app's Disabled palette group (proven
+    distinct by test_dark_palette_disabled_text_is_dimmer_than_active) is
+    what the combo's view will actually paint that item with.
+    """
+    from PyQt6.QtGui import QPalette
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    original_palette = QPalette(app.palette())
+    try:
+        app.setPalette(main._dark_palette())
+
+        win = main_window
+        monkeypatch.setattr(
+            main.audio_engine,
+            "list_all_sources",
+            lambda: [{"name": "Fake Mic", "is_loopback": False, "device_id": 0, "samplerate": 48000, "channels": 1, "wasapi_loopback": False}],
+        )
+        win.refresh_source_picker()
+        model = win.source_picker_combo.model()
+        assert model.item(0).isEnabled() is True
+
+        win.mixer.sources["Fake Mic"] = object()  # simulate it having been added
+        win.refresh_source_picker()
+        assert model.item(0).isEnabled() is False
+
+        win.mixer.sources.pop("Fake Mic")  # simulate it having been removed
+        win.refresh_source_picker()
+        assert model.item(0).isEnabled() is True
+    finally:
+        app.setPalette(original_palette)
+
+
+# ---------------------------------------------------------------------
 # VU-style switching -- switch_vu_style() drives the whole
 # create/replace-widget/paint/update_level cycle. These tests exercise it
 # for every registered style (vu_meters.VU_METER_STYLES), both in
