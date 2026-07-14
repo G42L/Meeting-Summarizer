@@ -13,7 +13,7 @@ A beautiful native Linux desktop client for Ollama.
 ![License](https://img.shields.io/github/license/g42l/Meeting-Summarizer)
 ![Stars](https://img.shields.io/github/stars/g42l/Meeting-Summarizer)
 ![Release](https://img.shields.io/github/v/release/g42l/Meeting-Summarizer)
-![Qt5](https://img.shields.io/badge/Qt-5-green)
+![Qt5](https://img.shields.io/badge/Qt-6-green)
 ![Linux](https://img.shields.io/badge/Linux-supported-blue)
 ![Windows](https://img.shields.io/badge/Windows-supported-blue)
 ![Mac](https://img.shields.io/badge/Mac-supported-blue)

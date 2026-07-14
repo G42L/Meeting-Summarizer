@@ -546,11 +546,18 @@ class HistorySidebar(QWidget):
     HANDLE_WIDTH = 14
     ANIMATION_MS = 180
     COLLAPSE_DELAY_MS = 250
-    TALL_ENOUGH_HEIGHT = 3000  # cropped to the real window height by Qt's child clipping
+    FALLBACK_HEIGHT = 800  # used only before the parent has a real size (e.g. pre-show)
+
+    expanded_changed = pyqtSignal(bool)  # emitted whenever the collapsed/expanded state actually flips
 
     def __init__(self, parent):
         super().__init__(parent)
-        self.setFixedSize(self.PANEL_WIDTH, self.TALL_ENOUGH_HEIGHT)
+        self.setFixedWidth(self.PANEL_WIDTH)
+        # Height tracks the parent (central widget) exactly, rather than a
+        # fixed oversize guess cropped by clipping -- a bottom-anchored
+        # widget like reset_settings_btn needs the layout's real bottom to
+        # land inside the visible window, not thousands of pixels below it.
+        self.setFixedHeight(parent.height() or self.FALLBACK_HEIGHT)
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -569,7 +576,13 @@ class HistorySidebar(QWidget):
         self.open_output_folder_btn = QPushButton("Open Outputs Folder")
         content_layout.addWidget(self.open_output_folder_btn)
 
-        content_layout.addWidget(QLabel("History (past sessions)"))
+        history_label_row = QHBoxLayout()
+        self.history_icon_label = QLabel()
+        self.history_icon_label.setFixedSize(16, 16)
+        history_label_row.addWidget(self.history_icon_label)
+        history_label_row.addWidget(QLabel("History (past sessions)"))
+        history_label_row.addStretch()
+        content_layout.addLayout(history_label_row)
 
         btn_row = QHBoxLayout()
         self.refresh_btn = QPushButton("Refresh")
@@ -581,6 +594,11 @@ class HistorySidebar(QWidget):
         self.list_widget = QListWidget()
         self.list_widget.setToolTip("Double-click a session to open its summary.md")
         content_layout.addWidget(self.list_widget)
+
+        self.reset_settings_btn = QPushButton("Reset Settings")
+        self.reset_settings_btn.setToolTip("Restore VU style, summary style, and diarization settings to their defaults")
+        content_layout.addWidget(self.reset_settings_btn)
+
         outer.addWidget(content, stretch=1)
 
         handle = QFrame()
@@ -624,9 +642,25 @@ class HistorySidebar(QWidget):
         self._hover_poll_timer.timeout.connect(self._check_hover)
         self._hover_poll_timer.start()
 
+        self._expanded_state = None
         self.reposition(expanded=False)
 
+    def sync_height(self):
+        """Call whenever the parent (central widget) is resized, so this
+        overlay's real bottom -- and anything anchored to it, like
+        reset_settings_btn -- always lines up with the visible window."""
+        parent = self.parentWidget()
+        if parent is not None:
+            self.setFixedHeight(parent.height())
+
+    def is_expanded(self):
+        return bool(self._expanded_state)
+
     def reposition(self, expanded, animate=False):
+        if expanded != self._expanded_state:
+            self._expanded_state = expanded
+            self.expanded_changed.emit(expanded)
+
         target_x = 0 if expanded else -(self.PANEL_WIDTH - self.HANDLE_WIDTH)
         target = QPoint(target_x, 0)
         if animate:
@@ -908,11 +942,11 @@ class MainWindow(QMainWindow):
         # builds and adds the widget exactly once. Don't also build it
         # here, or it gets added to the layout twice.
         self.vumeter = None
-        default_index = 4  # "Analog VU-meter" -- matches the previous default
+        self.DEFAULT_VU_STYLE_INDEX = 4  # "Analog VU-meter" -- matches the previous default
         settings = QSettings("MeetingTranscriber", "MeetingTranscriber")
-        saved_index = settings.value("vu_style/index", default_index, type=int)
+        saved_index = settings.value("vu_style/index", self.DEFAULT_VU_STYLE_INDEX, type=int)
         if not (0 <= saved_index < self.vu_style_combo.count()):
-            saved_index = default_index
+            saved_index = self.DEFAULT_VU_STYLE_INDEX
         self.vu_style_combo.setCurrentIndex(saved_index)
 
         vis_main_layout.addLayout(h_layout)
@@ -1039,8 +1073,19 @@ class MainWindow(QMainWindow):
         self.history_sidebar.open_folder_btn.clicked.connect(self.open_selected_history_folder)
         self._track_icon(lambda: self.history_sidebar.open_folder_btn.setIcon(self._icon("folder")))
         self.history_sidebar.list_widget.itemDoubleClicked.connect(self.open_history_summary)
-        self.history_sidebar.handle_label.setPixmap(self._icon("clock").pixmap(16, 16))
-        self._track_icon(lambda: self.history_sidebar.handle_label.setPixmap(self._icon("clock").pixmap(16, 16)))
+        self.history_sidebar.reset_settings_btn.setIcon(self._icon("rotate-ccw"))
+        self.history_sidebar.reset_settings_btn.clicked.connect(self.reset_settings_to_default)
+        self._track_icon(lambda: self.history_sidebar.reset_settings_btn.setIcon(self._icon("rotate-ccw")))
+        self.history_sidebar.history_icon_label.setPixmap(self._icon("clock").pixmap(16, 16))
+        self._track_icon(lambda: self.history_sidebar.history_icon_label.setPixmap(self._icon("clock").pixmap(16, 16)))
+
+        # Handle icon reflects the sidebar's actual collapsed/expanded state
+        # rather than always showing "clock" -- the sidebar now holds more
+        # than just history (Reset Settings, etc.), so a static history icon
+        # there stopped making sense.
+        self.history_sidebar.expanded_changed.connect(self._update_sidebar_handle_icon)
+        self._update_sidebar_handle_icon(self.history_sidebar.is_expanded())
+        self._track_icon(lambda: self._update_sidebar_handle_icon(self.history_sidebar.is_expanded()))
         self.history_sidebar.raise_()
 
     # ------------------------------------------------------------------
@@ -1133,6 +1178,10 @@ class MainWindow(QMainWindow):
         """
         self._icon_refreshers.append(apply_fn)
 
+    def _update_sidebar_handle_icon(self, expanded):
+        name = "sidebar-expand" if expanded else "sidebar-collapse"
+        self.history_sidebar.handle_label.setPixmap(self._icon(name, size=10).pixmap(10, 10))
+
     def changeEvent(self, event):
         super().changeEvent(event)
         if event.type() == QEvent.Type.PaletteChange:
@@ -1216,6 +1265,11 @@ class MainWindow(QMainWindow):
             color = QColor(LOG_ICON_COLORS[icon_name])
             pixmap = themed_icon(icon_name, color, size=14).pixmap(14, 14)
             document.addResource(QTextDocument.ResourceType.ImageResource, QUrl(icon_name), pixmap)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "history_sidebar"):
+            self.history_sidebar.sync_height()
 
     def closeEvent(self, event):
         self._save_prompt_style_settings()
@@ -2012,6 +2066,26 @@ class MainWindow(QMainWindow):
         settings = QSettings("MeetingTranscriber", "MeetingTranscriber")
         settings.setValue("prompt_style/selected_text", self.prompt_style_combo.currentText())
         settings.setValue("prompt_style/custom_text", self.custom_prompt_edit.toPlainText())
+
+    # ---------- Reset all persisted settings ----------
+    def reset_settings_to_default(self):
+        reply = QMessageBox.question(
+            self, "Reset settings",
+            "This will restore VU style, summary style, and diarization settings to "
+            "their defaults. This cannot be undone. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        settings = QSettings("MeetingTranscriber", "MeetingTranscriber")
+        settings.clear()
+
+        self._load_prompt_style_settings()
+        self._load_diarization_settings()
+        self.vu_style_combo.setCurrentIndex(self.DEFAULT_VU_STYLE_INDEX)
+
+        self.append_log("Settings reset to default.")
 
     def _current_prompt_template(self):
         style_name = self.prompt_style_combo.currentText()
