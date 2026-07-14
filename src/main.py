@@ -42,6 +42,7 @@ from . import whisper_engine
 from . import llm_backend
 from . import pipeline
 from . import sysmon
+from . import resources
 
 ICONS_DIR = os.path.join(os.path.dirname(__file__), "icons", "ui")
 # Qt Style Sheet url() needs forward slashes even on Windows.
@@ -676,7 +677,7 @@ class MainWindow(QMainWindow):
         self.playhead = 0
         self.playback_timer = None
 
-        icon_path = os.path.join(os.path.dirname(__file__), "icon.svg")
+        icon_path = str(resources.resource_path("src", "icon.svg"))
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
@@ -2145,11 +2146,15 @@ def apply_linux_color_scheme(app):
         pass  # any failure here must never block the app from starting
 
 
-if __name__ == "__main__":
+def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Transcriber")
-    app.setWindowIcon(QIcon("icon.svg"))
+    app.setWindowIcon(QIcon(str(resources.resource_path("src", "icons", "icon.svg"))))
     apply_linux_color_scheme(app)
     win = MainWindow()
     win.show()
     sys.exit(app.exec_())
+
+
+if __name__ == "__main__":
+    main()

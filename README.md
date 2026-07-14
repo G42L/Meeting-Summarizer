@@ -360,7 +360,8 @@ main.spec
 
 Only distribute the executable inside dist.
 
-> ***Note:***
+> <span style="color: #4475f1; font-size: 18px"><b>Note:</b></span>
+>
 > Instead of putting everything in the root, I would recommend a project structure:
 > ```
 > MyApp/
@@ -387,6 +388,48 @@ Only distribute the executable inside dist.
 > ```bash
 > pyinstaller --onefile src/myapp/main.py
 > ```
+>> <span style="color: #ea6f6f; font-size: 18px"><b>Sub-note:</b></span>
+>>
+>>If you want to avoid the package structure like in ths project, ```run.py```is added to the root as well as ```__init__.py``` inside ```/src/``` where ```main.py```is located, to have a mix script/module way of working.
+>>
+>> **run.py**
+>> ```python
+>> from src.main import main
+>> 
+>> if __name__ == "__main__":
+>>     main()
+>>```
+>> 
+>> **__init__.py**
+>>
+>> ```EMPTY FILE```
+>>
+>> Then build using
+>>
+>> **Windows**
+>> ```bash
+>> ```bash
+>> pyinstaller \
+>>    --onefile \
+>>    --windowed \
+>>    --icon=src/icons/icon.ico \
+>>    --add-data "src/icons;src/icons" \
+>>    run.py
+>> ```
+>> **Linux/MacOS**
+>> ```bash
+>> pyinstaller \
+>>    --onefile \
+>>    --windowed \
+>>    --icon=src/icons/icon.icns \
+>>    --add-data "src/icons:src/icons" \
+>>    run.py
+>> ```
+>> For more folders, add them too
+>> ```bash
+>> --add-data "src/fonts:src/fonts"
+>> --add-data "src/assets:src/assets"
+>> ```
 
 ## Option 2: Bundle assets
 
@@ -498,10 +541,20 @@ The application has no separate configuration file; all settings are selected th
 # Usage
 Launch the application as a module (its internal imports rely on this, rather than running `src/main.py` as a standalone script):
 
+**Module**
 ```bash
 source venv/bin/activate
 python -m src.main
 ```
+
+**Script**
+```bash
+source venv/bin/activate
+python run.py
+```
+
+**Built**
+Run the executable file in ```dist```.
 
 # GUI Overview
 
