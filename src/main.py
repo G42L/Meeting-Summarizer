@@ -752,6 +752,13 @@ class MainWindow(QMainWindow):
             "(BlackHole on macOS, PulseAudio Monitor on Linux, WASAPI loopback on Windows)"
         )
         picker_row.addWidget(self.source_picker_combo, stretch=1)
+        # refresh_source_picker() bakes each dropdown item's icon with
+        # self._icon() at populate-time, same as every other icon in the
+        # app -- without tracking it here too, those baked pixmaps would
+        # stay tinted for whichever theme was active the last time the
+        # picker was rebuilt (add/remove a source, or app startup),
+        # invisible-on-light-background if that happened while dark.
+        self._track_icon(self.refresh_source_picker)
         add_source_btn = QPushButton(self._icon("plus"), "Add")
         add_source_btn.clicked.connect(self.add_selected_source)
         self._track_icon(lambda b=add_source_btn: b.setIcon(self._icon("plus")))
