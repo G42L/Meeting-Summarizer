@@ -6,11 +6,13 @@ MuteButton, etc.) can be constructed directly. Nothing here opens a real
 audio device, hits a real LLM server, or touches the filesystem outside
 tmp_path/monkeypatch.
 """
+import random
 from pathlib import Path
 
 import pytest
+from PyQt6.QtGui import QPixmap
 
-from src import main
+from src import main, vu_meters
 
 
 @pytest.fixture
@@ -564,3 +566,83 @@ def test_apply_linux_color_scheme_detects_dark_via_portal(monkeypatch):
         assert (window_text.red(), window_text.green(), window_text.blue()) == (230, 230, 230)
     finally:
         app.setPalette(original_palette)
+
+
+# ---------------------------------------------------------------------
+# VU-style switching -- switch_vu_style() drives the whole
+# create/replace-widget/paint/update_level cycle. These tests exercise it
+# for every registered style (vu_meters.VU_METER_STYLES), both in
+# registry order and in a shuffled order (styles aren't independent of
+# each other in switch_vu_style -- it tears down whatever the *previous*
+# style's widget was, so the interesting failure mode is style A leaving
+# something behind that breaks style B, which sequential-only testing
+# can't surface).
+# ---------------------------------------------------------------------
+
+def _render(widget):
+    """Force a real paintEvent (offscreen render, not repaint()'s
+    visibility-gated no-op) and let any exception propagate."""
+    widget.resize(300, 130)
+    pixmap = QPixmap(widget.width(), widget.height())
+    widget.render(pixmap)
+
+
+def _assert_switched_cleanly(main_window, index):
+    name, widget_cls, *_ = vu_meters.VU_METER_STYLES[index]
+    assert isinstance(main_window.vumeter, widget_cls), name
+    # Exactly one widget in the container -- the old one was removed, not
+    # just covered up.
+    assert main_window.vu_container_layout.count() == 1, name
+    assert main_window.vu_container_layout.itemAt(0).widget() is main_window.vumeter
+    _render(main_window.vumeter)
+
+
+def test_switching_through_every_vu_style_in_sequence(main_window):
+    for index in range(len(vu_meters.VU_METER_STYLES)):
+        main_window.switch_vu_style(index)
+        _assert_switched_cleanly(main_window, index)
+
+
+def test_switching_through_every_vu_style_in_random_order(main_window):
+    order = list(range(len(vu_meters.VU_METER_STYLES)))
+    random.Random(20260714).shuffle(order)
+    for index in order:
+        main_window.switch_vu_style(index)
+        _assert_switched_cleanly(main_window, index)
+
+
+def test_switching_through_every_vu_style_forwards_live_audio_level(main_window, monkeypatch):
+    """Functional check, not just non-crashing: with a mocked 'live
+    recording' feeding a loud mono buffer through the mixer, every style
+    switch must actually receive that level via update_level(), the same
+    codepath switch_vu_style() uses for a real recording in progress."""
+    calls = []
+    for name, widget_cls, *_ in vu_meters.VU_METER_STYLES:
+        original_update_level = widget_cls.update_level
+
+        def make_wrapper(name=name, original=original_update_level):
+            def wrapper(self, rms):
+                calls.append((name, rms))
+                return original(self, rms)
+            return wrapper
+
+        monkeypatch.setattr(widget_cls, "update_level", make_wrapper())
+
+    loud_mono_buffer = [0.8] * 1600  # well above silence, below clipping
+    monkeypatch.setattr(main_window.mixer, "get_mixed_preview", lambda: loud_mono_buffer)
+    main_window.loaded_samples = None
+    main_window.is_recording = True
+
+    order = list(range(len(vu_meters.VU_METER_STYLES)))
+    random.Random(42).shuffle(order)
+    for index in order:
+        calls.clear()
+        main_window.switch_vu_style(index)
+        name, widget_cls, *_ = vu_meters.VU_METER_STYLES[index]
+
+        assert calls, f"{name} never received update_level() on switch"
+        call_name, rms = calls[-1]
+        assert call_name == name
+        assert rms > 0.0, f"{name} got a silent level despite the mocked loud buffer"
+
+        _render(main_window.vumeter)

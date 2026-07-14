@@ -779,7 +779,7 @@ class ModernVUMeter(QWidget):
         rect = self.rect()
 
         # ---- Dark background with rounded corners ----
-        bg_grad = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        bg_grad = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
         bg_grad.setColorAt(0.0, QColor(35, 35, 40, 230))
         bg_grad.setColorAt(1.0, QColor(18, 18, 22, 230))
         painter.setPen(QPen(QColor(60, 60, 65), 1))
@@ -1019,19 +1019,19 @@ class ClassicHorizontalVUMeter(QWidget):
         self.level = 0.0
         self.peak_hold = 0.0
         self.hold_counter = 0
-        self.setAutoFillBackground(True)
-        pal = self.palette()
-        pal.setColor(self.backgroundRole(), QColor(20, 20, 20))
-        self.setPalette(pal)
 
         # Smoothing for the needle
         self.smooth_level = 0.0
         self.alpha = alpha          # lower = more inertia
 
-        # Enable transparency
+        # Enable transparency -- autoFillBackground(True) with an opaque
+        # palette fights WA_TranslucentBackground: Qt stops erasing the
+        # widget between frames, so every paintEvent's needle/ticks blend
+        # into the last one instead of replacing it. Match the transparent
+        # setup every other meter in this file uses instead.
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        # self.setAutoFillBackground(False)
-        # self.setStyleSheet("background: transparent;")
+        self.setAutoFillBackground(False)
+        self.setStyleSheet("background: transparent;")
 
 
         # Use the same min/max as the scale
@@ -1098,9 +1098,8 @@ class ClassicHorizontalVUMeter(QWidget):
         w = rect.width()
         h = rect.height()
 
-        # Background with rounded corners
-        # bg_rect = self.rect()  # Use the full widget area
-        bg_rect = rect.adjusted(8, 8, -8, -8) # Use the less than full widget area
+        # Background with rounded corners -- full widget area, no margin
+        bg_rect = rect # rect.adjusted(8, 8, -8, -8) # Use the less than full widget area
         painter.setPen(QPen(QColor(60, 60, 60), 1))
         painter.setBrush(QBrush(QColor(25, 25, 25, 75)))
         painter.drawRoundedRect(bg_rect, 8, 8)
@@ -1108,7 +1107,10 @@ class ClassicHorizontalVUMeter(QWidget):
         left = bg_rect.left() + 20
         right = bg_rect.right() - 20
         top = bg_rect.top() + 20
-        bottom = bg_rect.bottom() - 20
+        # Leave room below the meter bar for tick marks (8px) + scale
+        # labels (14px) + a little breathing room, now that bg_rect has
+        # no margin of its own to borrow from.
+        bottom = bg_rect.bottom() - 32
         scale_height = bottom - top
 
         # Draw the coloured zone (green -> yellow -> red)
@@ -1148,9 +1150,9 @@ class ClassicHorizontalVUMeter(QWidget):
         needle_base_left = QPoint(needle_x - 6, top + 22)
         needle_base_right = QPoint(needle_x + 6, top + 22)
         path = QPainterPath()
-        path.moveTo(needle_tip)
-        path.lineTo(needle_base_left)
-        path.lineTo(needle_base_right)
+        path.moveTo(needle_tip.x(), needle_tip.y())
+        path.lineTo(needle_base_left.x(), needle_base_left.y())
+        path.lineTo(needle_base_right.x(), needle_base_right.y())
         path.closeSubpath()
         painter.setPen(QPen(QColor(255, 255, 255), 1))
         painter.setBrush(QBrush(QColor(255, 200, 50)))
@@ -1170,10 +1172,10 @@ class ClassicHorizontalVUMeter(QWidget):
         # Labels
         painter.setPen(QPen(QColor(180, 180, 180), 1))
         painter.drawText(bg_rect.left() + 4, bg_rect.top() + 14, "VU")
-        painter.drawText(bg_rect.right() - 30, bg_rect.bottom() - 4, "dB")
-        # Optional: "dreamstime" style branding
+        painter.drawText(bg_rect.right() - 26, bottom + 30, "dB")
+        # Brand mark, top-right corner
         painter.setPen(QPen(QColor(100, 100, 100), 1))
-        painter.drawText(bg_rect.right() - 70, bg_rect.bottom() - 4, "Sifam")
+        painter.drawText(bg_rect.right() - 46, bg_rect.top() + 14, "Sifam")
 
 class GlassVUMeter(QWidget):
     """
@@ -1247,7 +1249,7 @@ class GlassVUMeter(QWidget):
         # rect = rect.adjusted(8, 8, -8, -8) # Use the less than full widget area
 
         # ---- Background: glass gradient ----
-        bg_grad = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        bg_grad = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
         bg_grad.setColorAt(0.0, QColor(50, 50, 55))
         bg_grad.setColorAt(1.0, QColor(20, 20, 25))
         painter.setPen(QPen(QColor(70, 70, 80), 1))
@@ -1381,7 +1383,7 @@ class LiquidGlassVUMeter(QWidget):
         rect = self.rect()
 
         # ---- Background: dark with subtle gradient ----
-        bg_grad = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        bg_grad = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
         bg_grad.setColorAt(0.0, QColor(30, 35, 40, 230))
         bg_grad.setColorAt(1.0, QColor(15, 18, 22, 230))
         painter.setPen(QPen(QColor(60, 65, 70), 1))
@@ -1696,7 +1698,7 @@ class TubeAmplifierVUMeter(QWidget):
         # rect = rect.adjusted(8, 8, -8, -8) # Use the less than full widget area
 
         # Warm amber background with vignette
-        bg_grad = QRadialGradient(rect.center(), rect.width() * 0.7)
+        bg_grad = QRadialGradient(rect.center().x(), rect.center().y(), rect.width() * 0.7)
         bg_grad.setColorAt(0.0, QColor(60, 40, 20, 230))
         bg_grad.setColorAt(0.7, QColor(30, 20, 10, 230))
         bg_grad.setColorAt(1.0, QColor(15, 10, 5, 230))
@@ -1706,7 +1708,7 @@ class TubeAmplifierVUMeter(QWidget):
 
         # Inner glow (warm ring)
         inner_rect = rect.adjusted(10, 10, -10, -10)
-        grad = QRadialGradient(inner_rect.center(), inner_rect.width() * 0.5)
+        grad = QRadialGradient(inner_rect.center().x(), inner_rect.center().y(), inner_rect.width() * 0.5)
         grad.setColorAt(0.0, QColor(100, 70, 30, 0))
         grad.setColorAt(0.8, QColor(100, 70, 30, 20))
         grad.setColorAt(1.0, QColor(100, 70, 30, 80))
@@ -2406,6 +2408,204 @@ class BroadcastStereoVUMeter(QWidget):
             p.drawLine(int(x), 2, int(x), 6)
             p.drawLine(int(x), r.height() - scale_h - 4, int(x), r.height() - scale_h)
 
+class DawPeakRmsVUMeter(QWidget):
+    """
+    Horizontal peak/RMS meter, DAW mixer-strip style, with three stacked
+    channel rows: L, M (mid), R -- mirrors the L/R split
+    BroadcastStereoVUMeter uses for update_level(), plus a mid row.
+
+    update_level(rms) accepts:
+        float               -- mono; L, M, R all driven by the same level
+        (left, right)       -- stereo; M is the average of the two
+        (left, mid, right)  -- explicit mid channel
+    """
+
+    def __init__(self, parent=None, alpha=0.25, peak_attack=0.9, peak_release=0.08):
+        super().__init__(parent)
+        self.setMinimumWidth(180)
+        self.setMinimumHeight(80)
+        self.setMaximumHeight(150)
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAutoFillBackground(False)
+        self.setStyleSheet("background: transparent;")
+
+        # dB scale, matches the rest of the file
+        self.db_min = -50.0
+        self.db_max = 6.0
+
+        self.rms_alpha = alpha             # lower = more inertia
+        self.peak_attack = peak_attack     # fraction closed per frame on the way up
+        self.peak_release = peak_release   # fraction closed per frame on the way down
+
+        # Per-channel state: RMS body, peak cap, peak-hold hairline, clip LED
+        self.channels = {
+            ch: {
+                "rms_level": 0.0,
+                "peak_level": 0.0,
+                "peak_hold": 0.0,
+                "hold_counter": 0,
+                "clip_counter": 0,
+            }
+            for ch in ("L", "M", "R")
+        }
+
+    def _rms_to_level(self, rms):
+        if rms < 1e-10:
+            db = self.db_min
+        else:
+            db = 20.0 * np.log10(rms)
+        db = max(self.db_min, min(self.db_max, db))
+        level = (db - self.db_min) / (self.db_max - self.db_min)
+        return db, max(0.0, min(1.0, level))
+
+    def _update_channel(self, ch, rms):
+        db, level = self._rms_to_level(rms)
+        c = self.channels[ch]
+
+        # RMS body -- simple one-pole smoothing, symmetric attack/release
+        c["rms_level"] = c["rms_level"] * (1.0 - self.rms_alpha) + level * self.rms_alpha
+        c["rms_level"] = max(0.0, min(1.0, c["rms_level"]))
+
+        # Peak cap -- fast up, slow down (classic PPM-style ballistics)
+        if level > c["peak_level"]:
+            c["peak_level"] = c["peak_level"] * (1.0 - self.peak_attack) + level * self.peak_attack
+        else:
+            c["peak_level"] = c["peak_level"] * (1.0 - self.peak_release) + level * self.peak_release
+        c["peak_level"] = max(0.0, min(1.0, c["peak_level"]))
+
+        # Peak-hold hairline
+        if c["peak_level"] > c["peak_hold"]:
+            c["peak_hold"] = c["peak_level"]
+            c["hold_counter"] = 40
+        elif c["hold_counter"] > 0:
+            c["hold_counter"] -= 1
+        else:
+            c["peak_hold"] *= 0.985
+            if c["peak_hold"] < 0.01:
+                c["peak_hold"] = 0.0
+
+        # Clip detection
+        if db > -0.5:
+            c["clip_counter"] = 60
+        elif c["clip_counter"] > 0:
+            c["clip_counter"] -= 1
+
+    def update_level(self, rms):
+        """rms: float (mono) or a 2/3-tuple of 0..1 input levels."""
+        if isinstance(rms, (tuple, list)):
+            if len(rms) >= 3:
+                left, mid, right = rms[0], rms[1], rms[2]
+            else:
+                left, right = rms[0], rms[1]
+                mid = (left + right) / 2.0
+        else:
+            left = mid = right = rms
+
+        self._update_channel("L", left)
+        self._update_channel("M", mid)
+        self._update_channel("R", right)
+
+        self.update()
+
+    def _zone_color(self, position):
+        """position: 0..1 along the meter. Green/yellow/red zoning."""
+        if position < 0.60:
+            return QColor(0, 200, 90)
+        elif position < 0.85:
+            return QColor(230, 200, 0)
+        else:
+            return QColor(230, 60, 50)
+
+    def _draw_strip(self, painter, meter_rect, ch, label):
+        """meter_rect is a horizontal row now -- level fills left-to-right."""
+        c = self.channels[ch]
+        w = meter_rect.width()
+        h = meter_rect.height()
+
+        # RMS body -- continuous gradient fill, not segmented LEDs
+        rms_w = int(c["rms_level"] * w)
+        if rms_w > 0:
+            body_rect = QRect(meter_rect.left(), meter_rect.top(), rms_w, h)
+            grad = QLinearGradient(meter_rect.left(), 0, meter_rect.right(), 0)
+            grad.setColorAt(0.0, QColor(0, 200, 90))
+            grad.setColorAt(0.60, QColor(0, 200, 90))
+            grad.setColorAt(0.85, QColor(230, 200, 0))
+            grad.setColorAt(1.0, QColor(230, 60, 50))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(grad))
+            painter.drawRoundedRect(body_rect, 2, 2)
+
+        # Peak cap -- thin brighter block riding ahead of the RMS body
+        if c["peak_level"] > c["rms_level"] + 0.01:
+            cap_x = meter_rect.left() + int(c["peak_level"] * w)
+            cap_color = self._zone_color(c["peak_level"]).lighter(140)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(cap_color))
+            painter.drawRoundedRect(cap_x - 4, meter_rect.top(), 4, h, 1, 1)
+
+        # Meter border
+        painter.setPen(QPen(QColor(70, 70, 74), 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(meter_rect)
+
+        # Peak-hold hairline (white)
+        if c["peak_hold"] > 0.01:
+            hold_x = meter_rect.left() + int(c["peak_hold"] * w)
+            painter.setPen(QPen(QColor(255, 255, 255, 220), 2))
+            painter.drawLine(hold_x, meter_rect.top(), hold_x, meter_rect.bottom())
+
+        # Channel label, left of the strip
+        painter.setPen(QColor(200, 200, 200))
+        painter.drawText(meter_rect.left() - 20, meter_rect.top(), 16, h,
+                          Qt.AlignmentFlag.AlignCenter, label)
+
+        # Clip LED, right of the strip
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(255, 0, 0) if c["clip_counter"] > 0 else QColor(60, 0, 0))
+        led_y = meter_rect.top() + h // 2 - 4
+        painter.drawEllipse(meter_rect.right() + 6, led_y, 8, 8)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = self.rect()
+
+        # Background
+        bg_grad = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
+        bg_grad.setColorAt(0.0, QColor(32, 32, 36, 235))
+        bg_grad.setColorAt(1.0, QColor(16, 16, 19, 235))
+        painter.setPen(QPen(QColor(60, 60, 65), 1))
+        painter.setBrush(QBrush(bg_grad))
+        painter.drawRoundedRect(rect, 8, 8)
+
+        # Layout: three horizontal rows stacked top to bottom, with room
+        # reserved on the left for channel labels, on the right for clip
+        # LEDs, and at the bottom for the dB scale.
+        left_pad, right_pad = 26, 20
+        top_pad, bottom_pad = 12, 24
+        strips_rect = rect.adjusted(left_pad, top_pad, -right_pad, -bottom_pad)
+        gap = 6
+        row_h = (strips_rect.height() - 2 * gap) // 3
+
+        for i, ch in enumerate(("L", "M", "R")):
+            y = strips_rect.top() + i * (row_h + gap)
+            meter_rect = QRect(strips_rect.left(), y, strips_rect.width(), row_h)
+            self._draw_strip(painter, meter_rect, ch, ch)
+
+        # Scale ticks + labels, full range like the rest of the file
+        # (-50 .. +6), spanning the full width, below the rows.
+        painter.setPen(QPen(QColor(90, 90, 95), 1))
+        font = painter.font()
+        font.setPointSize(7)
+        painter.setFont(font)
+        for db in (-50, -40, -30, -20, -10, 0, 3, 6):
+            t = (db - self.db_min) / (self.db_max - self.db_min)
+            x = int(strips_rect.left() + t * strips_rect.width())
+            y = strips_rect.bottom()
+            painter.drawLine(x, y + 2, x, y + 6)
+            label = f"+{db}" if db > 0 else str(db)
+            painter.drawText(x - 12, y + 8, 24, 12, Qt.AlignmentFlag.AlignCenter, label)
 
 # ----------------------------------------------------------------------
 # Style registry + factory
@@ -2428,6 +2628,7 @@ VU_METER_STYLES = [
     ("Nordic VU",                   NordicVUMeter,            0.15, 60),
     ("LED Matrix Meter",            LEDMatrixBarMeter,        0.10, 120),
     ("Broadcast Stereo VU-meter",   BroadcastStereoVUMeter,   0.10, 80),
+    ("Daw Peak Rms VU-meter",       DawPeakRmsVUMeter,        0.15, 180),
 ]
 
 
