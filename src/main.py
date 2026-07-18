@@ -18,6 +18,7 @@ This file is the GUI/orchestration layer only. The actual logic lives in:
 import sys
 import os
 import re
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -30,7 +31,7 @@ from PyQt6.QtWidgets import (
     QGroupBox, QFileDialog, QMessageBox, QCheckBox, QSizePolicy, QSlider,
     QPlainTextEdit, QListWidget, QListWidgetItem, QLineEdit, QDialog,
     QDialogButtonBox, QSystemTrayIcon, QMenu, QFrame,
-    QGraphicsDropShadowEffect
+    QGraphicsDropShadowEffect, QInputDialog
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QSettings, QPropertyAnimation, QEasingCurve, QPoint, QSize, QUrl, QEvent
 from PyQt6.QtGui import QIcon, QFont, QKeySequence, QCursor, QPixmap, QPainter, QColor, QPalette, QTextDocument, QShortcut
@@ -570,6 +571,12 @@ class SummaryViewerDialog(QDialog):
         self.save_btn.setProperty("cls", "primary")
         self.save_btn.setEnabled(False)
         self.save_btn.clicked.connect(self.save)
+        self.export_btn = buttons.addButton("Save As...", QDialogButtonBox.ButtonRole.ActionRole)
+        self.export_btn.setIcon(themed_icon("download", text_color))
+        self.export_btn.clicked.connect(self.export_as)
+        self.copy_btn = buttons.addButton("Copy", QDialogButtonBox.ButtonRole.ActionRole)
+        self.copy_btn.setIcon(themed_icon("copy", text_color))
+        self.copy_btn.clicked.connect(self.copy_to_clipboard)
         close_btn = buttons.addButton("Close", QDialogButtonBox.ButtonRole.RejectRole)
         close_btn.setIcon(themed_icon("x", text_color))
         close_btn.clicked.connect(self.close)
@@ -612,6 +619,20 @@ class SummaryViewerDialog(QDialog):
         self._dirty = False
         self.save_btn.setEnabled(False)
         self._render_preview(text)
+
+    def export_as(self):
+        default_name = os.path.basename(self.md_path) if self.md_path else "summary.md"
+        path, _ = QFileDialog.getSaveFileName(self, "Save Summary As", default_name, "Markdown files (*.md);;All files (*)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.editor.toPlainText())
+        except OSError as e:
+            QMessageBox.warning(self, "Could not export", f"Could not save a copy to {path}:\n{e}")
+
+    def copy_to_clipboard(self):
+        QApplication.clipboard().setText(self.editor.toPlainText())
 
     def closeEvent(self, event):
         if self._dirty:
@@ -692,8 +713,14 @@ class HistorySidebar(QWidget):
         btn_row.addWidget(self.open_folder_btn)
         content_layout.addLayout(btn_row)
 
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("Search history…")
+        self.search_box.setClearButtonEnabled(True)
+        content_layout.addWidget(self.search_box)
+
         self.list_widget = QListWidget()
         self.list_widget.setToolTip("Double-click a session to open its summary.md")
+        self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         content_layout.addWidget(self.list_widget)
 
         self.reset_settings_btn = QPushButton("Reset Settings")
@@ -724,6 +751,17 @@ class HistorySidebar(QWidget):
         self._collapse_timer.setInterval(self.COLLAPSE_DELAY_MS)
         self._collapse_timer.timeout.connect(self._collapse)
 
+        # Full-text search: refresh_history() reads every summary.md once
+        # and stashes the whole session list (with a lowercased full_text
+        # cache) here, so filtering on every keystroke is pure in-memory
+        # string matching -- no repeated disk I/O while typing.
+        self._sessions = []
+        self._search_debounce_timer = QTimer(self)
+        self._search_debounce_timer.setSingleShot(True)
+        self._search_debounce_timer.setInterval(200)
+        self._search_debounce_timer.timeout.connect(self._apply_search_filter)
+        self.search_box.textChanged.connect(lambda _t: self._search_debounce_timer.start())
+
         self._animation = QPropertyAnimation(self, b"pos", self)
         self._animation.setDuration(self.ANIMATION_MS)
         self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
@@ -753,6 +791,21 @@ class HistorySidebar(QWidget):
         parent = self.parentWidget()
         if parent is not None:
             self.setFixedHeight(parent.height())
+
+    def _apply_search_filter(self):
+        query = self.search_box.text().strip().lower()
+        self.list_widget.clear()
+        for session in self._sessions:
+            if not query or query in session.get("full_text", ""):
+                self._add_session_item(session)
+
+    def _add_session_item(self, session):
+        text = session.get("display_name") or session["timestamp"]
+        if session["summary_snippet"]:
+            text += f"  —  {session['summary_snippet']}"
+        item = QListWidgetItem(text)
+        item.setData(Qt.ItemDataRole.UserRole, session)
+        self.list_widget.addItem(item)
 
     def is_expanded(self):
         return bool(self._expanded_state)
@@ -1174,6 +1227,7 @@ class MainWindow(QMainWindow):
         self.history_sidebar.open_folder_btn.clicked.connect(self.open_selected_history_folder)
         self._track_icon(lambda: self.history_sidebar.open_folder_btn.setIcon(self._icon("folder")))
         self.history_sidebar.list_widget.itemDoubleClicked.connect(self.open_history_summary)
+        self.history_sidebar.list_widget.customContextMenuRequested.connect(self._show_history_context_menu)
         self.history_sidebar.reset_settings_btn.setIcon(self._icon("rotate-ccw"))
         self.history_sidebar.reset_settings_btn.clicked.connect(self.reset_settings_to_default)
         self._track_icon(lambda: self.history_sidebar.reset_settings_btn.setIcon(self._icon("rotate-ccw")))
@@ -2203,15 +2257,22 @@ class MainWindow(QMainWindow):
 
     # ---------- History (past sessions) ----------
     def refresh_history(self):
-        self.history_sidebar.list_widget.clear()
         transcripts_dir = Path.cwd() / "transcripts"
-        for session in llm_backend.list_past_sessions(transcripts_dir):
-            text = session["timestamp"]
-            if session["summary_snippet"]:
-                text += f"  —  {session['summary_snippet']}"
-            item = QListWidgetItem(text)
-            item.setData(Qt.ItemDataRole.UserRole, session)
-            self.history_sidebar.list_widget.addItem(item)
+        sessions = llm_backend.list_past_sessions(transcripts_dir)
+        # Read each summary.md once here rather than per keystroke -- the
+        # sidebar's search box filters this in-memory cache, so typing
+        # never touches disk.
+        for session in sessions:
+            parts = [session["timestamp"], session.get("display_name") or ""]
+            if session["md_path"]:
+                try:
+                    with open(session["md_path"], encoding="utf-8") as f:
+                        parts.append(f.read())
+                except OSError:
+                    pass
+            session["full_text"] = " ".join(parts).lower()
+        self.history_sidebar._sessions = sessions
+        self.history_sidebar._apply_search_filter()
 
     def open_selected_history_folder(self):
         item = self.history_sidebar.list_widget.currentItem()
@@ -2232,8 +2293,48 @@ class MainWindow(QMainWindow):
         except OSError as e:
             QMessageBox.warning(self, "Could not open summary", f"Could not read {session['md_path']}:\n{e}")
             return
-        dialog = SummaryViewerDialog(session["md_path"], session["timestamp"], text, self)
+        title = session.get("display_name") or session["timestamp"]
+        dialog = SummaryViewerDialog(session["md_path"], title, text, self)
         dialog.exec()
+
+    def _show_history_context_menu(self, pos):
+        item = self.history_sidebar.list_widget.itemAt(pos)
+        if item is None:
+            return
+        session = item.data(Qt.ItemDataRole.UserRole)
+        menu = QMenu(self.history_sidebar.list_widget)
+        text_color = self.palette().color(QPalette.ColorRole.WindowText)
+        rename_action = menu.addAction(themed_icon("edit-3", text_color), "Rename...")
+        delete_action = menu.addAction(themed_icon("trash-2", text_color), "Delete...")
+        action = menu.exec(self.history_sidebar.list_widget.mapToGlobal(pos))
+        if action == rename_action:
+            self._rename_history_session(session)
+        elif action == delete_action:
+            self._delete_history_session(session)
+
+    def _rename_history_session(self, session):
+        current = session.get("display_name") or session["timestamp"]
+        new_name, ok = QInputDialog.getText(self, "Rename session", "Display name:", text=current)
+        if not ok:
+            return
+        llm_backend.set_session_display_name(session["folder"], new_name.strip())
+        self.refresh_history()
+
+    def _delete_history_session(self, session):
+        label = session.get("display_name") or session["timestamp"]
+        reply = QMessageBox.question(
+            self, "Delete session",
+            f"Permanently delete the session \"{label}\" and all its files? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            shutil.rmtree(session["folder"])
+        except OSError as e:
+            QMessageBox.warning(self, "Could not delete", f"Could not delete {session['folder']}:\n{e}")
+            return
+        self.refresh_history()
 
     # ---------- Lock configuration ----------
     def update_config_lock(self):

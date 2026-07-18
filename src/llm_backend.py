@@ -298,17 +298,46 @@ def _extract_summary_snippet(markdown_text, max_len=100):
     return snippet
 
 
+def _read_display_name(folder):
+    """Read the custom display name from a session's meta.json, if any."""
+    meta_path = folder / "meta.json"
+    if not meta_path.exists():
+        return ""
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    return (data.get("display_name") or "").strip()
+
+
+def set_session_display_name(folder, display_name):
+    """Write/update a session's custom display name in its meta.json."""
+    meta_path = Path(folder) / "meta.json"
+    data = {}
+    if meta_path.exists():
+        try:
+            data = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    data["display_name"] = display_name
+    meta_path.write_text(json.dumps(data), encoding="utf-8")
+
+
 def list_past_sessions(transcripts_dir):
     """
     Scan a transcripts directory for past session folders (each created by
     save_markdown), newest first by folder name (timestamps sort correctly
-    as strings since they're formatted YYYY-MM-DD HH.MM.SS).
+    as strings since they're formatted YYYY-MM-DD HH.MM.SS). Sorting is
+    always by folder name/timestamp, never by display_name, so a rename
+    never disturbs chronological order.
 
     Returns a list of dicts: {folder: Path, timestamp: str,
-    summary_snippet: str, md_path: str or None}. Folders without a
-    summary.md (e.g. a job that errored before saving) are still listed,
-    with summary_snippet="" and md_path=None, since the audio/transcript
-    may still be worth revisiting.
+    display_name: str, summary_snippet: str, md_path: str or None}.
+    display_name is "" unless the user has renamed the session via
+    set_session_display_name. Folders without a summary.md (e.g. a job
+    that errored before saving) are still listed, with summary_snippet=""
+    and md_path=None, since the audio/transcript may still be worth
+    revisiting.
     """
     transcripts_dir = Path(transcripts_dir)
     if not transcripts_dir.exists():
@@ -327,5 +356,11 @@ def list_past_sessions(transcripts_dir):
                 snippet = _extract_summary_snippet(md_file.read_text(encoding="utf-8"))
             except OSError:
                 pass
-        sessions.append({"folder": folder, "timestamp": folder.name, "summary_snippet": snippet, "md_path": md_path})
+        sessions.append({
+            "folder": folder,
+            "timestamp": folder.name,
+            "display_name": _read_display_name(folder),
+            "summary_snippet": snippet,
+            "md_path": md_path,
+        })
     return sessions

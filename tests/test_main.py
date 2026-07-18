@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtGui import QPixmap
+from PyQt6.QtWidgets import QMessageBox, QInputDialog, QFileDialog, QApplication
 
 from src import main, vu_meters
 
@@ -742,3 +743,201 @@ def test_switching_through_every_vu_style_forwards_live_audio_level(main_window,
         assert rms > 0.0, f"{name} got a silent level despite the mocked loud buffer"
 
         _render(main_window.vumeter)
+
+
+# ---------------------------------------------------------------------
+# History search (HistorySidebar search box + MainWindow.refresh_history)
+# ---------------------------------------------------------------------
+
+def _make_session(tmp_path, name, summary_body):
+    session_dir = tmp_path / "transcripts" / name
+    session_dir.mkdir(parents=True)
+    (session_dir / "summary.md").write_text(
+        f"# Meeting Summary\n\n## Summary\n\n{summary_body}\n\n---\n\n## Full Transcript\n\n",
+        encoding="utf-8",
+    )
+    return session_dir
+
+
+def test_refresh_history_populates_list_with_no_search_query(tmp_path, monkeypatch, main_window):
+    monkeypatch.chdir(tmp_path)
+    _make_session(tmp_path, "2026-01-01 10.00.00", "Discussed the roadmap.")
+    _make_session(tmp_path, "2026-01-02 10.00.00", "Reviewed the budget.")
+
+    main_window.refresh_history()
+
+    assert main_window.history_sidebar.list_widget.count() == 2
+
+
+def test_search_filters_by_text_found_only_in_summary_body(tmp_path, monkeypatch, main_window):
+    monkeypatch.chdir(tmp_path)
+    _make_session(tmp_path, "2026-01-01 10.00.00", "Discussed the unique roadmap keyword zzyzx.")
+    _make_session(tmp_path, "2026-01-02 10.00.00", "Reviewed the budget.")
+
+    main_window.refresh_history()
+    main_window.history_sidebar.search_box.setText("zzyzx")
+    main_window.history_sidebar._apply_search_filter()
+
+    assert main_window.history_sidebar.list_widget.count() == 1
+    item = main_window.history_sidebar.list_widget.item(0)
+    assert item.data(main.Qt.ItemDataRole.UserRole)["timestamp"] == "2026-01-01 10.00.00"
+
+
+def test_search_is_case_insensitive(tmp_path, monkeypatch, main_window):
+    monkeypatch.chdir(tmp_path)
+    _make_session(tmp_path, "2026-01-01 10.00.00", "Discussed the Roadmap Keyword.")
+
+    main_window.refresh_history()
+    main_window.history_sidebar.search_box.setText("ROADMAP")
+    main_window.history_sidebar._apply_search_filter()
+
+    assert main_window.history_sidebar.list_widget.count() == 1
+
+
+def test_search_with_no_matches_yields_empty_list(tmp_path, monkeypatch, main_window):
+    monkeypatch.chdir(tmp_path)
+    _make_session(tmp_path, "2026-01-01 10.00.00", "Discussed the roadmap.")
+
+    main_window.refresh_history()
+    main_window.history_sidebar.search_box.setText("nothing matches this")
+    main_window.history_sidebar._apply_search_filter()
+
+    assert main_window.history_sidebar.list_widget.count() == 0
+
+
+def test_search_debounce_timer_starts_on_text_change(tmp_path, monkeypatch, main_window):
+    monkeypatch.chdir(tmp_path)
+    main_window.refresh_history()
+
+    main_window.history_sidebar.search_box.setText("a")
+    assert main_window.history_sidebar._search_debounce_timer.isActive()
+
+
+# ---------------------------------------------------------------------
+# SummaryViewerDialog export / copy
+# ---------------------------------------------------------------------
+
+def test_export_as_writes_editor_content_including_unsaved_edit(tmp_path, monkeypatch):
+    md_path = tmp_path / "summary.md"
+    md_path.write_text("original content", encoding="utf-8")
+    dialog = main.SummaryViewerDialog(str(md_path), "2026-01-01 10.00.00", "original content")
+
+    dialog.editor.setPlainText("unsaved edit not yet on disk")
+    out_path = tmp_path / "exported.md"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(out_path), ""))
+
+    dialog.export_as()
+
+    assert out_path.read_text(encoding="utf-8") == "unsaved edit not yet on disk"
+    # original file on disk is untouched by export
+    assert md_path.read_text(encoding="utf-8") == "original content"
+
+
+def test_export_as_cancelled_writes_nothing(tmp_path, monkeypatch):
+    md_path = tmp_path / "summary.md"
+    md_path.write_text("content", encoding="utf-8")
+    dialog = main.SummaryViewerDialog(str(md_path), "2026-01-01 10.00.00", "content")
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: ("", ""))
+    dialog.export_as()  # should not raise, nothing written
+
+    assert list(tmp_path.iterdir()) == [md_path]
+
+
+def test_export_as_shows_warning_on_write_failure(tmp_path, monkeypatch):
+    md_path = tmp_path / "summary.md"
+    md_path.write_text("content", encoding="utf-8")
+    dialog = main.SummaryViewerDialog(str(md_path), "2026-01-01 10.00.00", "content")
+
+    bad_path = tmp_path / "no_such_dir" / "out.md"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(bad_path), ""))
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warnings.append(a))
+
+    dialog.export_as()
+
+    assert len(warnings) == 1
+
+
+def test_copy_to_clipboard_sets_editor_text(tmp_path, monkeypatch):
+    md_path = tmp_path / "summary.md"
+    md_path.write_text("content", encoding="utf-8")
+    dialog = main.SummaryViewerDialog(str(md_path), "2026-01-01 10.00.00", "content")
+    dialog.editor.setPlainText("copy me")
+
+    copied = []
+    fake_clipboard = type("FakeClipboard", (), {"setText": lambda self, text: copied.append(text)})()
+    monkeypatch.setattr(QApplication, "clipboard", staticmethod(lambda: fake_clipboard))
+
+    dialog.copy_to_clipboard()
+
+    assert copied == ["copy me"]
+
+
+# ---------------------------------------------------------------------
+# Session rename / delete (context menu handlers)
+# ---------------------------------------------------------------------
+
+def test_rename_history_session_writes_meta_json_and_refreshes(tmp_path, monkeypatch, main_window):
+    monkeypatch.chdir(tmp_path)
+    session_dir = _make_session(tmp_path, "2026-01-01 10.00.00", "Some summary.")
+    main_window.refresh_history()
+    session = main_window.history_sidebar.list_widget.item(0).data(main.Qt.ItemDataRole.UserRole)
+
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("New Name", True))
+    main_window._rename_history_session(session)
+
+    assert (session_dir / "meta.json").exists()
+    item = main_window.history_sidebar.list_widget.item(0)
+    assert "New Name" in item.text()
+
+
+def test_rename_history_session_cancelled_writes_nothing(tmp_path, monkeypatch, main_window):
+    monkeypatch.chdir(tmp_path)
+    session_dir = _make_session(tmp_path, "2026-01-01 10.00.00", "Some summary.")
+    main_window.refresh_history()
+    session = main_window.history_sidebar.list_widget.item(0).data(main.Qt.ItemDataRole.UserRole)
+
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Ignored", False))
+    main_window._rename_history_session(session)
+
+    assert not (session_dir / "meta.json").exists()
+
+
+def test_delete_history_session_confirmed_removes_folder(tmp_path, monkeypatch, main_window):
+    monkeypatch.chdir(tmp_path)
+    session_dir = _make_session(tmp_path, "2026-01-01 10.00.00", "Some summary.")
+    main_window.refresh_history()
+    session = main_window.history_sidebar.list_widget.item(0).data(main.Qt.ItemDataRole.UserRole)
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    main_window._delete_history_session(session)
+
+    assert not session_dir.exists()
+    assert main_window.history_sidebar.list_widget.count() == 0
+
+
+def test_delete_history_session_declined_keeps_folder(tmp_path, monkeypatch, main_window):
+    monkeypatch.chdir(tmp_path)
+    session_dir = _make_session(tmp_path, "2026-01-01 10.00.00", "Some summary.")
+    main_window.refresh_history()
+    session = main_window.history_sidebar.list_widget.item(0).data(main.Qt.ItemDataRole.UserRole)
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+    main_window._delete_history_session(session)
+
+    assert session_dir.exists()
+    assert main_window.history_sidebar.list_widget.count() == 1
+
+
+def test_context_menu_does_nothing_on_empty_area_click(tmp_path, monkeypatch, main_window):
+    monkeypatch.chdir(tmp_path)
+    main_window.refresh_history()
+
+    from PyQt6.QtCore import QPoint
+    exec_calls = []
+    monkeypatch.setattr(main.QMenu, "exec", lambda self, *a, **k: exec_calls.append(1))
+
+    main_window._show_history_context_menu(QPoint(5, 5))
+
+    assert exec_calls == []

@@ -436,3 +436,63 @@ def test_list_past_sessions_ignores_non_directory_entries(tmp_path):
 
     sessions = llm_backend.list_past_sessions(tmp_path)
     assert len(sessions) == 1
+
+
+# ---------------------------------------------------------------------
+# set_session_display_name / display_name in list_past_sessions
+# ---------------------------------------------------------------------
+
+def test_list_past_sessions_display_name_empty_when_no_meta_json(tmp_path):
+    (tmp_path / "2026-01-01 10.00.00").mkdir()
+
+    sessions = llm_backend.list_past_sessions(tmp_path)
+    assert sessions[0]["display_name"] == ""
+
+
+def test_set_session_display_name_writes_meta_json_and_is_read_back(tmp_path):
+    session_dir = tmp_path / "2026-01-01 10.00.00"
+    session_dir.mkdir()
+
+    llm_backend.set_session_display_name(session_dir, "Kickoff Meeting")
+
+    sessions = llm_backend.list_past_sessions(tmp_path)
+    assert sessions[0]["display_name"] == "Kickoff Meeting"
+
+
+def test_set_session_display_name_preserves_other_meta_json_keys(tmp_path):
+    session_dir = tmp_path / "2026-01-01 10.00.00"
+    session_dir.mkdir()
+    (session_dir / "meta.json").write_text('{"other_key": "keep-me"}', encoding="utf-8")
+
+    llm_backend.set_session_display_name(session_dir, "Renamed")
+
+    data = json.loads((session_dir / "meta.json").read_text(encoding="utf-8"))
+    assert data == {"other_key": "keep-me", "display_name": "Renamed"}
+
+
+def test_set_session_display_name_handles_malformed_existing_json(tmp_path):
+    session_dir = tmp_path / "2026-01-01 10.00.00"
+    session_dir.mkdir()
+    (session_dir / "meta.json").write_text("not valid json{{{", encoding="utf-8")
+
+    llm_backend.set_session_display_name(session_dir, "Recovered Name")
+
+    sessions = llm_backend.list_past_sessions(tmp_path)
+    assert sessions[0]["display_name"] == "Recovered Name"
+
+
+def test_list_past_sessions_sort_order_unaffected_by_display_name(tmp_path):
+    older = tmp_path / "2026-01-01 10.00.00"
+    newer = tmp_path / "2026-01-02 10.00.00"
+    older.mkdir()
+    newer.mkdir()
+
+    # Give the chronologically older session a display name that would
+    # sort first alphabetically, to prove sorting stays keyed on the
+    # folder name/timestamp, not on display_name.
+    llm_backend.set_session_display_name(older, "AAA First Alphabetically")
+
+    sessions = llm_backend.list_past_sessions(tmp_path)
+    assert [s["timestamp"] for s in sessions] == [
+        "2026-01-02 10.00.00", "2026-01-01 10.00.00",
+    ]
