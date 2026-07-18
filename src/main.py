@@ -527,6 +527,107 @@ class TranscriptReviewDialog(QDialog):
 
 
 # ----------------------------------------------------------------------
+# Built-in viewer for a session's summary.md, opened on double-click from
+# the history sidebar instead of shelling out to the OS's default .md
+# handler. Renders Markdown by parsing on a throwaway QTextDocument and
+# feeding its .toHtml() into the real (read-only) QTextEdit -- calling
+# setMarkdown() directly on the real widget is the same Qt bug worked
+# around in _flush_console (image resources don't resolve); harmless here
+# since summary.md never embeds images, but kept for consistency. Editing
+# toggles to a QPlainTextEdit showing the raw source; Save writes plain
+# text straight back to disk.
+# ----------------------------------------------------------------------
+class SummaryViewerDialog(QDialog):
+    def __init__(self, md_path, title, initial_text, parent=None):
+        super().__init__(parent)
+        self.md_path = md_path
+        self._original_text = initial_text
+        self._editing = False
+        self._dirty = False
+
+        self.setWindowTitle(f"Summary - {title}")
+        self.resize(900, 650)
+        self.setStyleSheet(BASE_STYLESHEET)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(title))
+
+        self.preview = QTextEdit()
+        self.preview.setReadOnly(True)
+        layout.addWidget(self.preview)
+
+        self.editor = QPlainTextEdit()
+        self.editor.setVisible(False)
+        layout.addWidget(self.editor)
+
+        buttons = QDialogButtonBox()
+        text_color = self.palette().color(QPalette.ColorRole.WindowText)
+        self.toggle_btn = buttons.addButton("Edit", QDialogButtonBox.ButtonRole.ActionRole)
+        self.toggle_btn.setIcon(themed_icon("edit-3", text_color))
+        self.toggle_btn.clicked.connect(self.toggle_edit_mode)
+        self.save_btn = buttons.addButton("Save", QDialogButtonBox.ButtonRole.ActionRole)
+        self.save_btn.setIcon(themed_icon("check", text_color))
+        self.save_btn.setProperty("cls", "primary")
+        self.save_btn.setEnabled(False)
+        self.save_btn.clicked.connect(self.save)
+        close_btn = buttons.addButton("Close", QDialogButtonBox.ButtonRole.RejectRole)
+        close_btn.setIcon(themed_icon("x", text_color))
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(buttons)
+
+        self.editor.setPlainText(initial_text)
+        self._render_preview(initial_text)
+        self.editor.textChanged.connect(self._on_text_changed)
+
+    def _render_preview(self, text):
+        parser = QTextDocument()
+        parser.setMarkdown(text)
+        self.preview.setHtml(parser.toHtml())
+
+    def toggle_edit_mode(self):
+        self._editing = not self._editing
+        if self._editing:
+            self.preview.setVisible(False)
+            self.editor.setVisible(True)
+            self.toggle_btn.setText("Preview")
+        else:
+            self._render_preview(self.editor.toPlainText())
+            self.editor.setVisible(False)
+            self.preview.setVisible(True)
+            self.toggle_btn.setText("Edit")
+
+    def _on_text_changed(self):
+        self._dirty = self.editor.toPlainText() != self._original_text
+        self.save_btn.setEnabled(self._dirty)
+
+    def save(self):
+        text = self.editor.toPlainText()
+        try:
+            with open(self.md_path, "w", encoding="utf-8") as f:
+                f.write(text)
+        except OSError as e:
+            QMessageBox.warning(self, "Could not save", f"Could not save changes to {self.md_path}:\n{e}")
+            return
+        self._original_text = text
+        self._dirty = False
+        self.save_btn.setEnabled(False)
+        self._render_preview(text)
+
+    def closeEvent(self, event):
+        if self._dirty:
+            reply = QMessageBox.question(
+                self, "Unsaved changes",
+                "You have unsaved changes to this summary. Discard them?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+        event.accept()
+
+
+# ----------------------------------------------------------------------
 # Floating history sidebar, styled after the collapsible conversation-
 # history sidebars in some LLM chat UIs: a thin handle stays permanently
 # visible at the left edge; hovering it slides the full panel out over the
@@ -2125,7 +2226,14 @@ class MainWindow(QMainWindow):
         if not session["md_path"]:
             QMessageBox.information(self, "No summary", "This session has no summary.md (the job may not have completed).")
             return
-        self._open_path(session["md_path"])
+        try:
+            with open(session["md_path"], encoding="utf-8") as f:
+                text = f.read()
+        except OSError as e:
+            QMessageBox.warning(self, "Could not open summary", f"Could not read {session['md_path']}:\n{e}")
+            return
+        dialog = SummaryViewerDialog(session["md_path"], session["timestamp"], text, self)
+        dialog.exec()
 
     # ---------- Lock configuration ----------
     def update_config_lock(self):
