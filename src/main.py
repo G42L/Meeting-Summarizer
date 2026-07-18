@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
     QGroupBox, QFileDialog, QMessageBox, QCheckBox, QSizePolicy, QSlider,
     QPlainTextEdit, QListWidget, QListWidgetItem, QLineEdit, QDialog,
     QDialogButtonBox, QSystemTrayIcon, QMenu, QFrame,
-    QGraphicsDropShadowEffect, QInputDialog
+    QGraphicsDropShadowEffect, QInputDialog, QGridLayout
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QSettings, QPropertyAnimation, QEasingCurve, QPoint, QSize, QUrl, QEvent
 from PyQt6.QtGui import QIcon, QFont, QKeySequence, QCursor, QPixmap, QPainter, QColor, QPalette, QTextDocument, QShortcut
@@ -1048,11 +1048,48 @@ class MainWindow(QMainWindow):
         prompt_style_row = QHBoxLayout()
         prompt_style_row.addWidget(QLabel("Summary Style:"))
         self.prompt_style_combo = QComboBox()
-        self.prompt_style_combo.addItems(list(llm_backend.PROMPT_TEMPLATES.keys()) + ["Custom..."])
+        self.prompt_style_combo.addItems(
+            list(llm_backend.PROMPT_TEMPLATES.keys()) + ["Select Pre-defined", "Custom..."]
+        )
         self.prompt_style_combo.setToolTip("How the LLM should summarize the transcript")
         self.prompt_style_combo.currentTextChanged.connect(self.on_prompt_style_changed)
         prompt_style_row.addWidget(self.prompt_style_combo, stretch=1)
         llm_group_layout.addLayout(prompt_style_row)
+
+        self.predefined_group = QWidget()
+        predefined_layout = QGridLayout(self.predefined_group)
+        predefined_layout.setContentsMargins(0, 0, 0, 0)
+        self.predefined_checkboxes = {}
+        self._predefined_sync_guard = False
+        # 4 columns of 2 rows each; Pure Ollama sits in its own row below,
+        # spanning all columns.
+        predefined_positions = {
+            "key_points": (0, 0),
+            "action_items": (1, 0),
+            "decisions": (0, 1),
+            "open_questions": (1, 1),
+            "deadlines": (0, 2),
+            "follow_ups": (1, 2),
+            "risks": (0, 3),
+            "attendees": (1, 3),
+        }
+        for key, phrase in llm_backend.PREDEFINED_SUMMARY_ITEMS.items():
+            checkbox = QCheckBox(phrase.capitalize())
+            checkbox.toggled.connect(lambda checked, k=key: self._on_predefined_item_toggled(k, checked))
+            self.predefined_checkboxes[key] = checkbox
+            row, col = predefined_positions[key]
+            predefined_layout.addWidget(checkbox, row, col)
+
+        self.pure_ollama_checkbox = QCheckBox("Pure Ollama (no summarization instructions, raw transcript)")
+        self.pure_ollama_checkbox.setToolTip(
+            "Sends the transcript with no summarization instructions at all -- mutually "
+            "exclusive with the items above."
+        )
+        self.pure_ollama_checkbox.toggled.connect(self._on_pure_ollama_toggled)
+        predefined_layout.addWidget(self.pure_ollama_checkbox, 2, 0, 1, 4)
+
+        self.predefined_group.setVisible(False)
+        llm_group_layout.addWidget(self.predefined_group)
 
         self.custom_prompt_edit = QPlainTextEdit()
         self.custom_prompt_edit.setMaximumHeight(80)
@@ -1558,6 +1595,7 @@ class MainWindow(QMainWindow):
             self.stop_recording()
 
     def start_recording(self):
+        self._fallback_predefined_to_default()
         if not self.mixer.sources:
             QMessageBox.warning(self, "No sources", "Add at least one audio source before recording.")
             return
@@ -1679,6 +1717,7 @@ class MainWindow(QMainWindow):
     # File loading + playback visualisation (unchanged behaviour)
     # ------------------------------------------------------------------
     def load_audio_file(self):
+        self._fallback_predefined_to_default()
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Select Audio File", "",
             "Audio Files (*.wav *.mp3 *.m4a *.flac *.ogg *.aac);;All Files (*)"
@@ -2206,21 +2245,84 @@ class MainWindow(QMainWindow):
     # ---------- Summary Style (prompt templates) ----------
     def on_prompt_style_changed(self, style_name):
         self.custom_prompt_edit.setVisible(style_name == "Custom...")
+        self.predefined_group.setVisible(style_name == "Select Pre-defined")
+
+    def _on_pure_ollama_toggled(self, checked):
+        # Guarded: toggling the other side's checkboxes below re-enters this
+        # slot (and _on_predefined_item_toggled) via their own `toggled`
+        # signals.
+        if self._predefined_sync_guard:
+            return
+        self._predefined_sync_guard = True
+        try:
+            if checked:
+                for checkbox in self.predefined_checkboxes.values():
+                    checkbox.setChecked(False)
+                    checkbox.setEnabled(False)
+            else:
+                for checkbox in self.predefined_checkboxes.values():
+                    checkbox.setEnabled(True)
+        finally:
+            self._predefined_sync_guard = False
+
+    def _on_predefined_item_toggled(self, key, checked):
+        if self._predefined_sync_guard:
+            return
+        self._predefined_sync_guard = True
+        try:
+            if checked:
+                self.pure_ollama_checkbox.setChecked(False)
+                self.pure_ollama_checkbox.setEnabled(False)
+            elif not any(cb.isChecked() for cb in self.predefined_checkboxes.values()):
+                self.pure_ollama_checkbox.setEnabled(True)
+        finally:
+            self._predefined_sync_guard = False
+
+    def _fallback_predefined_to_default(self):
+        """
+        Called when the user actually starts a job (record or load audio),
+        not on every checkbox toggle -- so unchecking everything to then
+        check Pure Ollama doesn't force a dropdown re-selection.
+        """
+        if self.prompt_style_combo.currentText() != "Select Pre-defined":
+            return
+        if self.pure_ollama_checkbox.isChecked():
+            return
+        if any(checkbox.isChecked() for checkbox in self.predefined_checkboxes.values()):
+            return
+        self.append_log(
+            "⚠️ No items selected in Select Pre-defined -- falling back to Standard Minutes."
+        )
+        self.prompt_style_combo.setCurrentText("Standard Minutes")
 
     def _load_prompt_style_settings(self):
         settings = QSettings("MeetingTranscriber", "MeetingTranscriber")
         selected_text = settings.value("prompt_style/selected_text", "Standard Minutes")
         custom_text = settings.value("prompt_style/custom_text", "")
+        predefined_selected = settings.value("prompt_style/predefined_selected", []) or []
+        if isinstance(predefined_selected, str):
+            predefined_selected = [predefined_selected]
+        pure_ollama = settings.value("prompt_style/pure_ollama", False, type=bool)
 
         self.custom_prompt_edit.setPlainText(custom_text)
+        for key, checkbox in self.predefined_checkboxes.items():
+            checkbox.setChecked(key in predefined_selected)
+        self.pure_ollama_checkbox.setChecked(pure_ollama)
+
         index = self.prompt_style_combo.findText(selected_text)
         self.prompt_style_combo.setCurrentIndex(index if index >= 0 else 0)
         self.custom_prompt_edit.setVisible(self.prompt_style_combo.currentText() == "Custom...")
+        self.predefined_group.setVisible(self.prompt_style_combo.currentText() == "Select Pre-defined")
 
     def _save_prompt_style_settings(self):
         settings = QSettings("MeetingTranscriber", "MeetingTranscriber")
         settings.setValue("prompt_style/selected_text", self.prompt_style_combo.currentText())
         settings.setValue("prompt_style/custom_text", self.custom_prompt_edit.toPlainText())
+        settings.setValue(
+            "prompt_style/predefined_selected",
+            [key for key, checkbox in self.predefined_checkboxes.items() if checkbox.isChecked()],
+        )
+        settings.setValue("prompt_style/pure_ollama", self.pure_ollama_checkbox.isChecked())
 
     # ---------- Reset all persisted settings ----------
     def reset_settings_to_default(self):
@@ -2244,6 +2346,12 @@ class MainWindow(QMainWindow):
 
     def _current_prompt_template(self):
         style_name = self.prompt_style_combo.currentText()
+        if style_name == "Select Pre-defined":
+            if self.pure_ollama_checkbox.isChecked():
+                return llm_backend.PURE_OLLAMA_TEMPLATE
+            selected = {key for key, checkbox in self.predefined_checkboxes.items() if checkbox.isChecked()}
+            return llm_backend.build_predefined_template(selected) or llm_backend.DEFAULT_PROMPT_TEMPLATE
+
         if style_name != "Custom...":
             return llm_backend.PROMPT_TEMPLATES.get(style_name)
 

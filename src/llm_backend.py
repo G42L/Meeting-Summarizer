@@ -158,6 +158,49 @@ PROMPT_TEMPLATES = {
     ),
 }
 
+# Checkbox items offered by the "Select Pre-defined" summary style, in the
+# order they should appear both in the UI and in the generated prompt. Keys
+# are stored in QSettings; values are the human-readable phrases spliced
+# into the prompt sentence.
+PREDEFINED_SUMMARY_ITEMS = {
+    "key_points": "key points",
+    "decisions": "decisions",
+    "action_items": "action items",
+    "follow_ups": "follow-ups",
+    "open_questions": "open questions",
+    "risks": "risks and blockers",
+    "deadlines": "deadlines",
+    "attendees": "attendees and roles",
+}
+
+# Prompt used by the "Pure Ollama" option: no summarization instructions at
+# all, just the raw transcript, so the model's own default behavior decides
+# the output. Mutually exclusive with PREDEFINED_SUMMARY_ITEMS checkboxes.
+PURE_OLLAMA_TEMPLATE = "{transcript}"
+
+
+def build_predefined_template(selected_keys):
+    """
+    Build a `{transcript}`-templated summarize prompt requesting exactly the
+    items named by `selected_keys` (a collection of PREDEFINED_SUMMARY_ITEMS
+    keys), phrased in canonical order regardless of selection order.
+    Returns None if `selected_keys` is empty.
+    """
+    phrases = [phrase for key, phrase in PREDEFINED_SUMMARY_ITEMS.items() if key in selected_keys]
+    if not phrases:
+        return None
+    if len(phrases) == 1:
+        items_text = phrases[0]
+    elif len(phrases) == 2:
+        items_text = f"{phrases[0]} and {phrases[1]}"
+    else:
+        items_text = ", ".join(phrases[:-1]) + f", and {phrases[-1]}"
+    return (
+        "Summarize the following meeting transcript. "
+        f"Provide a concise summary with {items_text}.\n\n"
+        "Transcript:\n{transcript}"
+    )
+
 
 def summarize(transcript, backend_info, llm_model, on_chunk, log, queue_worker=None, prompt_template=None):
     """
