@@ -123,13 +123,13 @@ Sources are mixed independently of how fast each device's driver delivers audio 
 
 ## The Audio Sources panel
 ```text
-┌─ Audio Sources ───────────────────────────────────────────────────────────┐
+┌─ Audio Sources ──────────────────────────────────────────────────────────┐
 │ Add source: [ 🖥 Monitor of HDA NVidia (loopback)  ▾ ]  [+ Add] [Refresh] │
-│             (already-added devices appear greyed out and unselectable)    │
-│                                                                           │
-│  🎤 Realtek Mic        Gain [───●───────] 100%   🔊   █ █ ░░   ⊗          │
+│             (already-added devices appear greyed out and unselectable)   │
+│                                                                          │
+│  🎤 Realtek Mic        Gain [───●───────] 100%  🔊   █ █ ░░   ⊗          │
 │  🖥 Teams (loopback)   Gain [──────●────] 130%   🔊   █ ░░░░   ⊗          │
-└───────────────────────────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 * **Add source** lists every microphone plus every detected system-audio device; picking one and clicking **Add** starts it immediately as its own row.
 * Each row has an independent **gain** slider (0–200%), a **mute button** (see [Mute Button: Short Click vs. Long Press](#Mute-Button-Short-Click-vs-Long-Press) below), a small live VU meter, and a small remove button that turns red on hover.
