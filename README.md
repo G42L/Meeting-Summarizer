@@ -128,7 +128,7 @@ Sources are mixed independently of how fast each device's driver delivers audio 
 │             (already-added devices appear greyed out and unselectable)   │
 │                                                                          │
 │  🎤 Realtek Mic        Gain [───●───────] 100%  🔊   █ █ ░░   ⊗          │
-│  🖥 Teams (loopback)   Gain [──────●────] 130%   🔊   █ ░░░░   ⊗          │
+│  🖥  Teams (loopback)   Gain [──────●────] 130%  🔊   █ ░░░░   ⊗          │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 * **Add source** lists every microphone plus every detected system-audio device; picking one and clicking **Add** starts it immediately as its own row.
