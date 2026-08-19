@@ -1018,6 +1018,15 @@ class MainWindow(QMainWindow):
         self.hf_token_edit.setPlaceholderText("hf_...")
         self.hf_token_edit.setEnabled(False)
         options_layout.addWidget(self.hf_token_edit, stretch=1)
+
+        self.tts_check = QCheckBox("Read summary aloud (TTS)")
+        self.tts_check.setIcon(self._icon("volume-high"))
+        self._track_icon(lambda: self.tts_check.setIcon(self._icon("volume-high")))
+        self.tts_check.setToolTip(
+            "Requires piper-tts installed (`pip install piper-tts`). Saves a summary.wav "
+            "alongside the transcript; the voice model downloads once on first use."
+        )
+        options_layout.addWidget(self.tts_check)
         whisper_group_layout.addLayout(options_layout)
 
         self.whisper_group.setLayout(whisper_group_layout)
@@ -2074,6 +2083,7 @@ class MainWindow(QMainWindow):
             review_transcript=self.review_transcript_check.isChecked(),
             enable_diarization=self.diarization_check.isChecked(),
             hf_token=self.hf_token_edit.text() or None,
+            enable_tts=self.tts_check.isChecked(),
         )
         self.queue_worker.add_job(job)
         self.job_count += 1

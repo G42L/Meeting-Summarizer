@@ -19,6 +19,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from . import whisper_engine
 from . import llm_backend
 from . import diarization
+from . import tts_engine
 
 
 def new_output_dir():
@@ -42,7 +43,8 @@ class Job:
     _counter = 0
 
     def __init__(self, audio_file_path, whisper_model, backend_info, llm_model, use_whisper_cli, output_dir=None,
-                 prompt_template=None, review_transcript=False, enable_diarization=False, hf_token=None):
+                 prompt_template=None, review_transcript=False, enable_diarization=False, hf_token=None,
+                 enable_tts=False):
         Job._counter += 1
         self.id = Job._counter
         self.audio_file_path = audio_file_path
@@ -55,6 +57,7 @@ class Job:
         self.review_transcript = review_transcript
         self.enable_diarization = enable_diarization
         self.hf_token = hf_token
+        self.enable_tts = enable_tts
 
 
 class ProcessingWorker(QObject):
@@ -166,6 +169,21 @@ class ProcessingWorker(QObject):
                 job.backend_info, job.llm_model, job.whisper_model,
             )
             self.log.emit("✅ Summary generated.")
+            self.progress.emit(90)
+
+            if job.enable_tts:
+                if tts_engine.is_available():
+                    self.log.emit("🔊 Reading summary aloud...")
+                    wav_path = self.output_dir / "summary.wav"
+                    result = tts_engine.synthesize(summary, tts_engine.DEFAULT_VOICE, wav_path, self.log.emit)
+                    if result is None:
+                        self.log.emit("⚠️ Text-to-speech failed -- continuing without audio.")
+                else:
+                    self.log.emit(
+                        "⚠️ Text-to-speech requested but piper-tts isn't installed -- "
+                        "continuing without audio."
+                    )
+
             self.progress.emit(100)
             self.finished.emit(md_path)
         except Exception as e:

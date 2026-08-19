@@ -45,16 +45,19 @@ def test_job_review_and_diarization_fields_default_off():
     assert job.review_transcript is False
     assert job.enable_diarization is False
     assert job.hf_token is None
+    assert job.enable_tts is False
 
 
 def test_job_stores_review_and_diarization_fields():
     job = pipeline.Job(
         "a.wav", "tiny", {}, "model", False,
         review_transcript=True, enable_diarization=True, hf_token="hf_abc",
+        enable_tts=True,
     )
     assert job.review_transcript is True
     assert job.enable_diarization is True
     assert job.hf_token == "hf_abc"
+    assert job.enable_tts is True
 
 
 # ---------------------------------------------------------------------
@@ -388,6 +391,101 @@ def test_process_diarization_skipped_when_using_whisper_cli(tmp_path, monkeypatc
     events = _connect_collectors(worker)
     job = pipeline.Job(str(audio), "tiny", {}, "model", True, output_dir=str(tmp_path), enable_diarization=True)
     worker.process(job, FakeQueueWorkerFlag())
+
+
+# ---------------------------------------------------------------------
+# Text-to-speech (job.enable_tts)
+# ---------------------------------------------------------------------
+
+def test_process_tts_not_run_when_disabled(tmp_path, monkeypatch):
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"fake")
+    monkeypatch.setattr(pipeline.whisper_engine, "transcribe", lambda *a, **k: "the transcript")
+    monkeypatch.setattr(pipeline.llm_backend, "summarize", lambda *a, **k: "the summary")
+    monkeypatch.setattr(pipeline.llm_backend, "save_markdown", lambda *a, **k: "md.md")
+
+    def fail_if_called(*a, **k):
+        raise AssertionError("tts_engine.synthesize should not be called when enable_tts is False")
+
+    monkeypatch.setattr(pipeline.tts_engine, "synthesize", fail_if_called)
+
+    worker = pipeline.ProcessingWorker()
+    events = _connect_collectors(worker)
+    job = pipeline.Job(str(audio), "tiny", {}, "model", False, output_dir=str(tmp_path), enable_tts=False)
+    worker.process(job, FakeQueueWorkerFlag())
+
+    assert events["finished"] == ["md.md"]
+    assert events["error"] == []
+
+
+def test_process_tts_synthesizes_summary_when_enabled(tmp_path, monkeypatch):
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"fake")
+    monkeypatch.setattr(pipeline.whisper_engine, "transcribe", lambda *a, **k: "the transcript")
+    monkeypatch.setattr(pipeline.llm_backend, "summarize", lambda *a, **k: "the summary")
+    monkeypatch.setattr(pipeline.llm_backend, "save_markdown", lambda *a, **k: "md.md")
+    monkeypatch.setattr(pipeline.tts_engine, "is_available", lambda: True)
+
+    received = {}
+
+    def fake_synthesize(text, voice_name, output_path, log):
+        received["text"] = text
+        received["voice_name"] = voice_name
+        received["output_path"] = output_path
+        return output_path
+
+    monkeypatch.setattr(pipeline.tts_engine, "synthesize", fake_synthesize)
+
+    worker = pipeline.ProcessingWorker()
+    events = _connect_collectors(worker)
+    job = pipeline.Job(str(audio), "tiny", {}, "model", False, output_dir=str(tmp_path), enable_tts=True)
+    worker.process(job, FakeQueueWorkerFlag())
+
+    assert received["text"] == "the summary"
+    assert received["voice_name"] == pipeline.tts_engine.DEFAULT_VOICE
+    assert received["output_path"] == tmp_path / "summary.wav"
+    assert events["finished"] == ["md.md"]
+    assert events["error"] == []
+
+
+def test_process_tts_failure_does_not_fail_job(tmp_path, monkeypatch):
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"fake")
+    monkeypatch.setattr(pipeline.whisper_engine, "transcribe", lambda *a, **k: "the transcript")
+    monkeypatch.setattr(pipeline.llm_backend, "summarize", lambda *a, **k: "the summary")
+    monkeypatch.setattr(pipeline.llm_backend, "save_markdown", lambda *a, **k: "md.md")
+    monkeypatch.setattr(pipeline.tts_engine, "is_available", lambda: True)
+    monkeypatch.setattr(pipeline.tts_engine, "synthesize", lambda *a, **k: None)
+
+    worker = pipeline.ProcessingWorker()
+    events = _connect_collectors(worker)
+    job = pipeline.Job(str(audio), "tiny", {}, "model", False, output_dir=str(tmp_path), enable_tts=True)
+    worker.process(job, FakeQueueWorkerFlag())
+
+    assert events["finished"] == ["md.md"]
+    assert events["error"] == []
+
+
+def test_process_tts_skipped_when_piper_not_installed(tmp_path, monkeypatch):
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"fake")
+    monkeypatch.setattr(pipeline.whisper_engine, "transcribe", lambda *a, **k: "the transcript")
+    monkeypatch.setattr(pipeline.llm_backend, "summarize", lambda *a, **k: "the summary")
+    monkeypatch.setattr(pipeline.llm_backend, "save_markdown", lambda *a, **k: "md.md")
+    monkeypatch.setattr(pipeline.tts_engine, "is_available", lambda: False)
+
+    def fail_if_called(*a, **k):
+        raise AssertionError("tts_engine.synthesize should not be called when piper-tts isn't installed")
+
+    monkeypatch.setattr(pipeline.tts_engine, "synthesize", fail_if_called)
+
+    worker = pipeline.ProcessingWorker()
+    events = _connect_collectors(worker)
+    job = pipeline.Job(str(audio), "tiny", {}, "model", False, output_dir=str(tmp_path), enable_tts=True)
+    worker.process(job, FakeQueueWorkerFlag())
+
+    assert events["finished"] == ["md.md"]
+    assert events["error"] == []
 
     assert events["error"] == []
     assert events["finished"] == ["md.md"]

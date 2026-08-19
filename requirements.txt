@@ -27,6 +27,13 @@ nvidia-ml-py>=12.0
 # timestamps to align speaker turns against.
 pyannote.audio>=3.1
 
+# Text-to-speech (prototype) — optional and light: pure Python + onnxruntime,
+# no torch. Voice models (~60 MiB each) download once on first use via
+# `python -m piper.download_voices <voice>`, cached locally afterward.
+# tts_engine.py degrades gracefully (is_available() reports it cleanly) if
+# this isn't installed.
+piper-tts>=1.3
+
 # ---------------------------------------------------------------
 # Platform-specific system-audio (Teams/loopback) capture:
 #
