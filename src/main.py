@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
     QGroupBox, QFileDialog, QMessageBox, QCheckBox, QSizePolicy, QSlider,
     QPlainTextEdit, QListWidget, QListWidgetItem, QLineEdit, QDialog,
     QDialogButtonBox, QSystemTrayIcon, QMenu, QFrame,
-    QGraphicsDropShadowEffect, QInputDialog, QGridLayout
+    QGraphicsDropShadowEffect, QInputDialog, QGridLayout, QSpinBox
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QTimer, QSettings, QPropertyAnimation, QEasingCurve, QPoint, QSize, QUrl, QEvent
 from PyQt6.QtGui import QIcon, QFont, QKeySequence, QCursor, QPixmap, QPainter, QColor, QPalette, QTextDocument, QShortcut
@@ -44,6 +44,15 @@ from . import llm_backend
 from . import pipeline
 from . import sysmon
 from . import resources
+
+# How much audio the live-transcript preview (see LiveTranscriptionWorker)
+# batches up before running Whisper on it. Shorter = preview text lands
+# sooner but more sentences get chopped mid-way and the model reloads its
+# inference more often (more CPU); longer = fewer, cleaner chunks but a
+# longer lag behind live audio. 4s is a reasonable middle ground for CPU
+# inference with small-to-medium models. User-configurable in the UI
+# (live_transcript_interval_spin), this is only the fallback/default.
+DEFAULT_LIVE_TRANSCRIPT_CHUNK_SECONDS = 4
 
 ICONS_DIR = os.path.join(os.path.dirname(__file__), "icons", "ui")
 # Qt Style Sheet url() needs forward slashes even on Windows.
@@ -724,7 +733,7 @@ class HistorySidebar(QWidget):
         content_layout.addWidget(self.list_widget)
 
         self.reset_settings_btn = QPushButton("Reset Settings")
-        self.reset_settings_btn.setToolTip("Restore VU style, summary style, and diarization settings to their defaults")
+        self.reset_settings_btn.setToolTip("Restore VU style, summary style, diarization, and live transcript settings to their defaults")
         content_layout.addWidget(self.reset_settings_btn)
 
         outer.addWidget(content, stretch=1)
@@ -858,6 +867,12 @@ class MainWindow(QMainWindow):
         self.source_rows = {}      # name -> SourceRow
         self.is_recording = False
         self._reported_source_errors = {}  # name -> last-logged error, avoids spamming the log every tick
+
+        # ---- Live transcript (preview) state ----
+        self.live_transcription_thread = None
+        self.live_transcription_worker = None
+        self.live_transcription_timer = QTimer()
+        self.live_transcription_timer.timeout.connect(self._pull_live_transcription_chunk)
 
         # ---- Loaded-file playback state (unchanged from before) ----
         self.loaded_samples = None
@@ -1019,6 +1034,17 @@ class MainWindow(QMainWindow):
         self.hf_token_edit.setEnabled(False)
         options_layout.addWidget(self.hf_token_edit, stretch=1)
 
+        self.live_transcript_check = QCheckBox("Live transcript (preview)")
+        self.live_transcript_check.setIcon(self._icon("audio-wave"))
+        self._track_icon(lambda: self.live_transcript_check.setIcon(self._icon("audio-wave")))
+        self.live_transcript_check.setToolTip(
+            "Show a rolling, approximate transcript while recording, a few seconds behind live. "
+            "Requires the faster-whisper backend (not whisper-cli). This is only a preview -- the "
+            "final transcript is still generated from the full recording after you press Stop."
+        )
+        self.live_transcript_check.toggled.connect(self.on_live_transcript_toggled)
+        options_layout.addWidget(self.live_transcript_check)
+
         self.tts_check = QCheckBox("Read summary aloud (TTS)")
         self.tts_check.setIcon(self._icon("volume-high"))
         self._track_icon(lambda: self.tts_check.setIcon(self._icon("volume-high")))
@@ -1152,6 +1178,41 @@ class MainWindow(QMainWindow):
         vis_main_layout.addLayout(h_layout)
         vis_group.setLayout(vis_main_layout)
         layout.addWidget(vis_group)
+
+        # ----- Live transcript preview (only shown when the checkbox above
+        # is on -- most of the time this stays hidden to save vertical
+        # space, since it's an occasional-use option). -----
+        self.live_transcript_group = QGroupBox("Live Transcript (preview)")
+        live_transcript_layout = QVBoxLayout()
+
+        interval_row = QHBoxLayout()
+        interval_row.addWidget(QLabel("Chunk interval:"))
+        self.live_transcript_interval_spin = QSpinBox()
+        self.live_transcript_interval_spin.setRange(2, 15)
+        self.live_transcript_interval_spin.setValue(DEFAULT_LIVE_TRANSCRIPT_CHUNK_SECONDS)
+        self.live_transcript_interval_spin.setSuffix(" s")
+        self.live_transcript_interval_spin.setToolTip(
+            "How much audio to batch up before transcribing it for the live preview. Shorter -- "
+            "text appears sooner but sentences get chopped more often and Whisper runs more "
+            "frequently (more CPU). Longer -- cleaner chunks but the preview lags further behind."
+        )
+        _settings = QSettings("MeetingTranscriber", "MeetingTranscriber")
+        self.live_transcript_interval_spin.setValue(
+            _settings.value("live_transcript/chunk_seconds", DEFAULT_LIVE_TRANSCRIPT_CHUNK_SECONDS, type=int)
+        )
+        self.live_transcript_interval_spin.valueChanged.connect(self._on_live_transcript_interval_changed)
+        interval_row.addWidget(self.live_transcript_interval_spin)
+        interval_row.addStretch()
+        live_transcript_layout.addLayout(interval_row)
+
+        self.live_transcript_text = QTextEdit()
+        self.live_transcript_text.setReadOnly(True)
+        self.live_transcript_text.setMaximumHeight(90)
+        self.live_transcript_text.setPlaceholderText("Live transcript will appear here a few seconds behind live audio...")
+        live_transcript_layout.addWidget(self.live_transcript_text)
+        self.live_transcript_group.setLayout(live_transcript_layout)
+        self.live_transcript_group.setVisible(False)
+        layout.addWidget(self.live_transcript_group)
 
         # ----- System resource monitor (CPU/RAM/GPU/VRAM) -----
         sys_group = QGroupBox("System")
@@ -1490,6 +1551,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self._save_prompt_style_settings()
         self._save_diarization_settings()
+        self._stop_live_transcription()  # in case the window closes mid-recording
         self.mixer.shutdown()  # stop() alone would leave sources monitoring; we're closing for good
         if self.queue_worker:
             self.queue_worker.stop()
@@ -1659,6 +1721,70 @@ class MainWindow(QMainWindow):
         # runs continuously and mixer.tick() now accumulates automatically
         # because self.mixer.start() just flipped is_running to True.
 
+        if self.live_transcript_check.isChecked():
+            self._start_live_transcription()
+
+    # ------------------------------------------------------------------
+    # Live transcript (preview)
+    # ------------------------------------------------------------------
+    def _start_live_transcription(self):
+        """Spin up a LiveTranscriptionWorker on its own QThread for the
+        duration of this recording. Only reachable when live_transcript_check
+        is checked, which on_use_cli_toggled keeps mutually exclusive with
+        "Use whisper-cli" -- so the faster-whisper model here is always the
+        right backend for it."""
+        self.live_transcript_text.clear()
+
+        current_idx = self.whisper_combo.currentIndex()
+        item_data = self.whisper_combo.itemData(current_idx, Qt.ItemDataRole.UserRole)
+        whisper_model = item_data["name"] if item_data and "name" in item_data else self.whisper_combo.currentText().split()[0]
+
+        self.live_transcription_thread = QThread()
+        self.live_transcription_worker = whisper_engine.LiveTranscriptionWorker(whisper_model)
+        self.live_transcription_worker.moveToThread(self.live_transcription_thread)
+
+        self.live_transcription_thread.started.connect(self.live_transcription_worker.run)
+        self.live_transcription_worker.partial_text.connect(self._on_live_transcript_partial)
+        self.live_transcription_worker.log.connect(self.append_log)
+
+        self.live_transcription_thread.start()
+        self.live_transcription_timer.start(self.live_transcript_interval_spin.value() * 1000)
+
+    def _stop_live_transcription(self):
+        self.live_transcription_timer.stop()
+        if self.live_transcription_worker is not None:
+            self.live_transcription_worker.stop()
+        if self.live_transcription_thread is not None:
+            self.live_transcription_thread.quit()
+            self.live_transcription_thread.wait(5000)
+        self.live_transcription_worker = None
+        self.live_transcription_thread = None
+
+    def _on_live_transcript_interval_changed(self, seconds):
+        # Applies immediately if a recording is already in progress, not
+        # just to the next one -- setInterval() takes effect on the timer's
+        # next firing, no restart needed.
+        if self.live_transcription_timer.isActive():
+            self.live_transcription_timer.setInterval(seconds * 1000)
+        QSettings("MeetingTranscriber", "MeetingTranscriber").setValue("live_transcript/chunk_seconds", seconds)
+
+    def _pull_live_transcription_chunk(self):
+        """Called every live_transcript_interval_spin.value() seconds (see
+        self.live_transcription_timer) while a live-transcription worker is
+        active. Naturally produces nothing to feed while paused, since
+        pull_live_transcription_audio() only returns audio recorded since
+        the last call and pausing stops that."""
+        if self.live_transcription_worker is None:
+            return
+        chunk = self.mixer.pull_live_transcription_audio()
+        self.live_transcription_worker.feed_audio(chunk)
+
+    def _on_live_transcript_partial(self, text):
+        # QTextEdit.append() adds text as a new paragraph and scrolls to
+        # the bottom on its own -- good enough for a rolling preview panel
+        # that's only ever a few lines tall.
+        self.live_transcript_text.append(text)
+
     def toggle_pause_recording(self):
         """Pause/resume the in-progress recording. Only meaningful while
         actually recording -- disabled at every other time (see reset_ui/
@@ -1683,6 +1809,7 @@ class MainWindow(QMainWindow):
             self.append_log("⏸ Recording paused. Press Resume (or Stop) to continue.")
 
     def stop_recording(self):
+        self._stop_live_transcription()
         mixed_audio = self.mixer.stop()  # sources keep running; monitoring continues
         self.is_recording = False
         self.dev_group.setEnabled(True)
@@ -2023,9 +2150,22 @@ class MainWindow(QMainWindow):
         if not checked and getattr(self, "_diarization_was_checked", False):
             self.diarization_check.setChecked(True)
 
+        # Same story for live transcript -- it feeds in-memory numpy chunks
+        # straight into faster-whisper, which whisper-cli (a subprocess
+        # that only reads files) has no equivalent for.
+        if checked:
+            self._live_transcript_was_checked = self.live_transcript_check.isChecked()
+            self.live_transcript_check.setChecked(False)
+        self.live_transcript_check.setEnabled(not checked)
+        if not checked and getattr(self, "_live_transcript_was_checked", False):
+            self.live_transcript_check.setChecked(True)
+
     def on_diarization_toggled(self, checked):
         self.hf_token_edit.setEnabled(checked)
         self.hf_token_label.setEnabled(checked)
+
+    def on_live_transcript_toggled(self, checked):
+        self.live_transcript_group.setVisible(checked)
 
     def _load_diarization_settings(self):
         settings = QSettings("MeetingTranscriber", "MeetingTranscriber")
@@ -2385,8 +2525,8 @@ class MainWindow(QMainWindow):
     def reset_settings_to_default(self):
         reply = QMessageBox.question(
             self, "Reset settings",
-            "This will restore VU style, summary style, and diarization settings to "
-            "their defaults. This cannot be undone. Continue?",
+            "This will restore VU style, summary style, diarization, and live transcript "
+            "settings to their defaults. This cannot be undone. Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -2397,6 +2537,7 @@ class MainWindow(QMainWindow):
 
         self._load_prompt_style_settings()
         self._load_diarization_settings()
+        self.live_transcript_interval_spin.setValue(DEFAULT_LIVE_TRANSCRIPT_CHUNK_SECONDS)
         self.vu_style_combo.setCurrentIndex(self.DEFAULT_VU_STYLE_INDEX)
 
         self.append_log("Settings reset to default.")

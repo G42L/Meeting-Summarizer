@@ -47,13 +47,14 @@ Table of Contents
 15. [Configuration](#Configuration)
 16. [Usage](#Usage)
 17. [Recording](#Recording)
-18. [Loading an Existing Audio File](#Loading-an-Existing-Audio-File)
-19. [Selecting Models](#Selecting-Models)
-20. [Processing](#Processing)
-21. [Viewing Output](#Viewing-Output)
-22. [File Output Structure](#FileOutput-Structure)
-23. [Troubleshooting](#Troubleshooting)
-24. [License](#License)
+18. [Live Transcript Preview](#Live-Transcript-Preview)
+19. [Loading an Existing Audio File](#Loading-an-Existing-Audio-File)
+20. [Selecting Models](#Selecting-Models)
+21. [Processing](#Processing)
+22. [Viewing Output](#Viewing-Output)
+23. [File Output Structure](#FileOutput-Structure)
+24. [Troubleshooting](#Troubleshooting)
+25. [License](#License)
 
 # Features
 * 🎛️ **Multi-source Audio Mixer Engine** – record your microphone and system/Teams audio (loopback) at the same time, mixed live into one stream. Add as many sources as you like; each gets its own gain slider, mute button, and VU meter.
@@ -78,6 +79,7 @@ Table of Contents
 * 📝 **Summary Style presets** – pick "Standard Minutes", "Action Items Only", "Executive Digest", or write your own custom prompt (persisted across restarts). See [Summary Style & Custom Prompts](#Summary-Style--Custom-Prompts).
 * ✏️ **Transcript review** – optionally pause after transcription to read/edit the text before it's sent to the LLM. See [Transcript Review](#Transcript-Review).
 * 🗣️ **Speaker diarization** *(optional)* – label who's speaking in the transcript, even when multiple people share one microphone, via `pyannote.audio`. See [Speaker Diarization](#Speaker-Diarization).
+* 📡 **Live transcript preview** *(optional)* – a rolling, approximate transcript a few seconds behind live audio while recording, so you're not staring at a blank screen until you press Stop. See [Live Transcript Preview](#Live-Transcript-Preview).
 * 🕘 **History sidebar** – a collapsible, hover-to-open panel listing past sessions from `./transcripts/`, with a one-click jump to any session's summary or folder. See [History (Past Sessions)](#History-Past-Sessions).
 * 🖥️ **System tray + keyboard shortcut** – a tray icon for quick Record/Stop access and `Ctrl+Alt+R` to toggle recording from anywhere in the app. See [System Tray & Keyboard Shortcut](#System-Tray--Keyboard-Shortcut).
 * 🎨 Modern, theme-aware UI – flat rounded controls and a bundled vector icon set (light/dark palette-tinted automatically, so it matches your OS theme) instead of relying on emoji-font rendering, which isn't guaranteed consistent across platforms.
@@ -578,7 +580,7 @@ Run the executable file in ```dist```.
 # GUI Overview
 
 1. **Audio Sources** – add one or more microphones and/or system-audio devices; each row has gain, a mute button (short click vs. long press — see [above](#Mute-Button-Short-Click-vs-Long-Press)), and its own VU meter.
-2. Whisper Model – choose the model, toggle whisper‑cli mode, and optionally enable transcript review / speaker diarization.
+2. Whisper Model – choose the model, toggle whisper‑cli mode, and optionally enable transcript review / speaker diarization / live transcript preview. See [Live Transcript Preview](#Live-Transcript-Preview).
 3. LLM Backend – select your running backend/model, and the Summary Style prompt to use.
 4. Audio Monitor – shows the live **mixed** waveform and VU meter during recording.
 5. Control Buttons:
@@ -598,6 +600,13 @@ Run the executable file in ```dist```.
 4. Click 🎤 Record – the combined waveform and VU meter will show the live mixed input.
 5. Need a break? Click ⏸ Pause (or `Ctrl+Alt+P`) – the sources keep monitoring (waveform/VU meters stay live) but nothing more is added to the saved recording. Click ▶️ Resume to pick back up — the new audio is appended to what you already recorded, with no dead air from the pause baked in. You can pause/resume as many times as you like within one recording.
 6. When finished, click ⏹ Stop – the mixed recording (including everything from before and after any pauses) is saved as one WAV file and automatically added to the processing queue.
+
+# Live Transcript Preview
+* Check **Live transcript (preview)** (Whisper Model panel) before you press Record to see a rolling, approximate transcript appear a few seconds behind live audio, in a small panel above the System monitor.
+* This is a preview only: audio is transcribed in independent chunks as they're recorded (**Chunk interval**, default 4s, adjustable 2–15s in the panel), so the wording is rougher than — and occasionally chops a sentence in the middle of — the real transcript. Shorter intervals mean the text lands sooner but chops sentences more often and runs Whisper more frequently (more CPU); longer intervals mean cleaner chunks but a longer lag. Changing it while a recording is in progress applies immediately, from the next chunk. The authoritative transcript is still generated from the complete recording after you press Stop, exactly as before this feature existed; nothing from the live preview is written to disk.
+* Requires the faster-whisper backend — it's automatically unavailable (and unchecked) whenever **Use whisper-cli** is checked, since whisper-cli can only transcribe files, not the in-memory audio this needs.
+* Pausing (see above) pauses the live preview too — it only ever shows audio that's actually part of the saved recording.
+* Off by default, since it keeps the selected Whisper model loaded and running continuously for the whole recording — turn it on only when you want the running commentary.
 
 # Loading an Existing Audio File
 * Click 📂 Load Audio and select a file (WAV, MP3, M4A, FLAC, OGG, AAC are supported).

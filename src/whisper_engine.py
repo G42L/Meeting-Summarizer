@@ -14,9 +14,12 @@ invisible until it silently isn't.
 """
 
 import subprocess
+import threading
 import time
+from collections import deque
 from pathlib import Path
 
+import numpy as np
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
 # ----------------------------------------------------------------------
@@ -368,3 +371,90 @@ class DownloadWorker(QObject):
         success, error = download_whisper_model(self.model_name)
         self.log.emit("Download completed." if success else f"❌ Download failed: {error}")
         self.finished.emit(success, self.model_name)
+
+
+# ----------------------------------------------------------------------
+# Live (rolling) transcription while recording
+# ----------------------------------------------------------------------
+
+class LiveTranscriptionWorker(QObject):
+    """
+    Runs in a background QThread for the duration of a recording,
+    transcribing small rolling chunks of mixed audio (handed in via
+    feed_audio(), fed from AudioMixerEngine.pull_live_transcription_audio())
+    as they arrive, and emitting each chunk's text as a rough live preview.
+
+    This is deliberately just a preview: chunk boundaries can fall
+    mid-sentence (each chunk is transcribed independently, with no context
+    from the one before it), and it uses beam_size=1 for speed over
+    accuracy. The authoritative transcript still comes from transcribe()/
+    transcribe_faster() run against the complete saved recording once Stop
+    is pressed, same as before this existed -- this worker's output is
+    never written to disk or used for anything but the on-screen preview.
+
+    faster-whisper only: whisper-cli has no way to transcribe an in-memory
+    numpy array without a round-trip through a temp file per chunk, which
+    at a few-second chunk cadence would spend more time on process
+    start-up than on the audio itself.
+    """
+    partial_text = pyqtSignal(str)
+    log = pyqtSignal(str)
+
+    def __init__(self, whisper_model):
+        super().__init__()
+        self.whisper_model_name = whisper_model
+        self._queue = deque()
+        self._lock = threading.Lock()
+        self._new_audio = threading.Event()
+        self._stop_event = threading.Event()
+
+    def feed_audio(self, audio_chunk):
+        """Thread-safe -- called from the main thread. Queues a chunk of
+        mono float32 audio at ENGINE_SAMPLE_RATE for the worker thread to
+        transcribe next. No-op for an empty/None chunk (e.g. nothing new
+        was recorded since the last poll, or the recording is paused)."""
+        if audio_chunk is None or getattr(audio_chunk, "size", 0) == 0:
+            return
+        with self._lock:
+            self._queue.append(audio_chunk)
+        self._new_audio.set()
+
+    def stop(self):
+        """Thread-safe -- signals run()'s loop to exit after its current
+        chunk (if any). Does not block; caller still needs QThread.wait()
+        to know the thread has actually finished."""
+        self._stop_event.set()
+        self._new_audio.set()  # wake up a blocked wait() so the stop is noticed promptly
+
+    def _drain(self):
+        with self._lock:
+            if not self._queue:
+                return None
+            chunks = list(self._queue)
+            self._queue.clear()
+        return np.concatenate(chunks)
+
+    @pyqtSlot()
+    def run(self):
+        try:
+            model = _load_faster_whisper_model(self.whisper_model_name, self.log.emit)
+        except ImportError:
+            self.log.emit("❌ Live transcript needs faster-whisper (not installed) -- disabling for this recording.")
+            return
+        if model is None:
+            return
+
+        while not self._stop_event.is_set():
+            self._new_audio.wait(timeout=0.5)
+            self._new_audio.clear()
+            chunk = self._drain()
+            if chunk is None or chunk.size == 0:
+                continue
+            try:
+                segments, _info = model.transcribe(chunk, beam_size=1, condition_on_previous_text=False)
+                text = " ".join(seg.text.strip() for seg in segments if seg.text.strip())
+            except Exception as e:
+                self.log.emit(f"⚠️ Live transcript error: {e}")
+                continue
+            if text:
+                self.partial_text.emit(text)

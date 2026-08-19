@@ -432,6 +432,7 @@ class AudioMixerEngine:
     def __init__(self):
         self.sources = {}                     # name -> AudioSource
         self._mixed_chunks = []               # accumulated only while recording
+        self._live_chunks = []                # accumulated only while recording, drained by pull_live_transcription_audio()
         self._mixed_preview = deque(maxlen=ENGINE_SAMPLE_RATE)
         self._running = False                 # True only while actually recording
         self._paused = False                  # True while recording is paused (see pause()/resume())
@@ -488,6 +489,7 @@ class AudioMixerEngine:
         if not self.sources:
             raise RuntimeError("Add at least one source before starting the mixer.")
         self._mixed_chunks = []
+        self._live_chunks = []
         self._mixed_preview.clear()
         self._paused = False
         errors = []
@@ -582,6 +584,7 @@ class AudioMixerEngine:
         self._mixed_preview.extend(mixed.tolist())
         if self._running:
             self._mixed_chunks.append(mixed)
+            self._live_chunks.append(mixed)
         return float(np.sqrt(np.mean(np.square(mixed)))) if mixed.size else 0.0
 
     # ---------------- reading results ----------------
@@ -591,6 +594,18 @@ class AudioMixerEngine:
         if not self._mixed_chunks:
             return np.empty(0, dtype=np.float32)
         return np.concatenate(self._mixed_chunks)
+
+    def pull_live_transcription_audio(self):
+        """Drain and return whatever's been recorded since the last call to
+        this method, as one mono float32 np.ndarray -- feed for a rolling
+        live-transcript worker. Independent of get_mixed_audio() (the
+        full/final recording so far, never drained); only grows while
+        actually recording, so this naturally goes quiet during a pause()
+        without the caller needing to check is_paused itself."""
+        if not self._live_chunks:
+            return np.empty(0, dtype=np.float32)
+        chunks, self._live_chunks = self._live_chunks, []
+        return np.concatenate(chunks)
 
     def get_mixed_preview(self):
         """Last ~1s of mixed audio, for the combined waveform widget."""

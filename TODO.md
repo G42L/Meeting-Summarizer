@@ -4,7 +4,7 @@
 - [x] Pause/resume recording — currently only start/stop. A long meeting with a break means either recording through silence or stitching two separate files manually.
 
 ## Live Transcription
-- [ ] Rolling/live transcript while recording, instead of only after recording stops.
+- [x] Rolling/live transcript while recording, instead of only after recording stops.
 
 ## Diarization
 - [ ] UI to rename raw speaker labels (`SPEAKER_00`, `SPEAKER_01`, from [diarization.py:74](src/diarization.py#L74)) to actual names — every transcript currently needs manual find/replace to be readable.

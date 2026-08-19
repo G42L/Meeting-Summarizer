@@ -201,6 +201,38 @@ def test_resume_appends_to_previously_recorded_audio(mixer):
     assert mixer.get_mixed_audio().size == 4
 
 
+def test_pull_live_transcription_audio_drains_since_last_call(mixer):
+    a = _add_active_source(mixer, "a")
+    mixer.start()
+    a._handle_chunk(np.array([0.5, 0.5], dtype=np.float32))
+    mixer.tick()
+
+    delta = mixer.pull_live_transcription_audio()
+    assert delta.size == 2
+    # Already drained -- a second call with nothing new should be empty.
+    assert mixer.pull_live_transcription_audio().size == 0
+
+    a._handle_chunk(np.array([0.1], dtype=np.float32))
+    mixer.tick()
+    assert mixer.pull_live_transcription_audio().size == 1
+
+
+def test_pull_live_transcription_audio_empty_when_not_recording(mixer):
+    a = _add_active_source(mixer, "a")
+    a._handle_chunk(np.array([0.5, 0.5], dtype=np.float32))
+    mixer.tick()  # not recording yet
+    assert mixer.pull_live_transcription_audio().size == 0
+
+
+def test_pull_live_transcription_audio_empty_while_paused(mixer):
+    a = _add_active_source(mixer, "a")
+    mixer.start()
+    mixer.pause()
+    a._handle_chunk(np.array([0.5, 0.5], dtype=np.float32))
+    mixer.tick()
+    assert mixer.pull_live_transcription_audio().size == 0
+
+
 def test_stop_clears_paused_flag(mixer):
     _add_active_source(mixer, "a")
     mixer.start()
