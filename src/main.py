@@ -1201,6 +1201,16 @@ class MainWindow(QMainWindow):
         self._track_icon(lambda: self.record_btn.setIcon(self._icon(self._record_icon_name)))
         control_layout.addWidget(self.record_btn)
 
+        # Only enabled while actually recording (see start_recording/
+        # stop_recording/reset_ui); toggles Pause<->Resume in place rather
+        # than being two separate buttons.
+        self.pause_btn = QPushButton(self._icon("pause"), "Pause")
+        self.pause_btn.clicked.connect(self.toggle_pause_recording)
+        self.pause_btn.setEnabled(False)
+        self._pause_icon_name = "pause"
+        self._track_icon(lambda: self.pause_btn.setIcon(self._icon(self._pause_icon_name)))
+        control_layout.addWidget(self.pause_btn)
+
         self.load_btn = QPushButton(self._icon("upload"), "Load Audio")
         self.load_btn.clicked.connect(self.load_audio_file)
         self._track_icon(lambda: self.load_btn.setIcon(self._icon("upload")))
@@ -1343,6 +1353,11 @@ class MainWindow(QMainWindow):
         self.record_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         self.record_shortcut.activated.connect(self.toggle_recording)
         self.record_btn.setToolTip("Start/stop recording (Ctrl+Alt+R)")
+
+        self.pause_shortcut = QShortcut(QKeySequence("Ctrl+Alt+P"), self)
+        self.pause_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.pause_shortcut.activated.connect(self.toggle_pause_recording)
+        self.pause_btn.setToolTip("Pause/resume recording (Ctrl+Alt+P)")
 
     # ------------------------------------------------------------------
     # Styling helpers
@@ -1614,6 +1629,10 @@ class MainWindow(QMainWindow):
         self._record_icon_name = "stop-circle"
         self.record_btn.setIcon(self._icon("stop-circle"))
         self._set_button_class(self.record_btn, "danger")
+        self.pause_btn.setEnabled(True)
+        self.pause_btn.setText("Pause")
+        self._pause_icon_name = "pause"
+        self.pause_btn.setIcon(self._icon("pause"))
         self.progress_bar.setValue(0)
         self.append_log("🎤 Recording... (press Stop to finish)")
 
@@ -1639,6 +1658,29 @@ class MainWindow(QMainWindow):
         # No per-recording timer to start here -- self.monitor_timer already
         # runs continuously and mixer.tick() now accumulates automatically
         # because self.mixer.start() just flipped is_running to True.
+
+    def toggle_pause_recording(self):
+        """Pause/resume the in-progress recording. Only meaningful while
+        actually recording -- disabled at every other time (see reset_ui/
+        start_recording), so this is only reachable via the shortcut while
+        self.is_recording is True. Sources (and thus the VU meters/
+        waveform) keep running through a pause exactly as during normal
+        recording; only mixer.tick()'s accumulation into the saved audio
+        pauses, so the gap doesn't get baked into meeting.wav as silence."""
+        if not self.is_recording:
+            return
+        if self.mixer.is_paused:
+            self.mixer.resume()
+            self.pause_btn.setText("Pause")
+            self._pause_icon_name = "pause"
+            self.pause_btn.setIcon(self._icon("pause"))
+            self.append_log("▶️ Recording resumed.")
+        else:
+            self.mixer.pause()
+            self.pause_btn.setText("Resume")
+            self._pause_icon_name = "mic"
+            self.pause_btn.setIcon(self._icon("mic"))
+            self.append_log("⏸ Recording paused. Press Resume (or Stop) to continue.")
 
     def stop_recording(self):
         mixed_audio = self.mixer.stop()  # sources keep running; monitoring continues
@@ -2214,6 +2256,11 @@ class MainWindow(QMainWindow):
         self._record_icon_name = "mic"
         self.record_btn.setIcon(self._icon("mic"))
         self._set_button_class(self.record_btn, "primary")
+
+        self.pause_btn.setEnabled(False)
+        self.pause_btn.setText("Pause")
+        self._pause_icon_name = "pause"
+        self.pause_btn.setIcon(self._icon("pause"))
 
         self.progress_bar.setValue(0)
 

@@ -168,6 +168,48 @@ def test_tick_only_accumulates_into_recording_while_running(mixer):
     assert mixer.get_mixed_audio().size == 2
 
 
+def test_pause_stops_accumulation_without_discarding_prior_audio(mixer):
+    a = _add_active_source(mixer, "a")
+    mixer.start()
+    a._handle_chunk(np.array([0.5, 0.5], dtype=np.float32))
+    mixer.tick()
+    assert mixer.get_mixed_audio().size == 2
+
+    mixer.pause()
+    assert mixer.is_paused is True
+    a._handle_chunk(np.array([0.9, 0.9, 0.9], dtype=np.float32))
+    mixer.tick()  # paused -- should not land in the saved recording
+    assert mixer.get_mixed_audio().size == 2
+
+
+def test_resume_appends_to_previously_recorded_audio(mixer):
+    a = _add_active_source(mixer, "a")
+    mixer.start()
+    a._handle_chunk(np.array([0.5, 0.5], dtype=np.float32))
+    mixer.tick()
+
+    mixer.pause()
+    a._handle_chunk(np.array([0.9], dtype=np.float32))
+    mixer.tick()  # discarded while paused
+
+    mixer.resume()
+    assert mixer.is_paused is False
+    a._handle_chunk(np.array([0.1, 0.1], dtype=np.float32))
+    mixer.tick()
+    # 2 samples from before the pause + 2 samples from after resume, the
+    # single sample ticked while paused is nowhere in there.
+    assert mixer.get_mixed_audio().size == 4
+
+
+def test_stop_clears_paused_flag(mixer):
+    _add_active_source(mixer, "a")
+    mixer.start()
+    mixer.pause()
+    assert mixer.is_paused is True
+    mixer.stop()
+    assert mixer.is_paused is False
+
+
 def test_muted_source_excluded_from_mix_but_still_drained(mixer):
     a = _add_active_source(mixer, "a")
     a.muted = True

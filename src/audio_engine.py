@@ -418,6 +418,11 @@ class AudioMixerEngine:
 
         engine.start()   # Record pressed -- tick() now also accumulates
         ...
+        engine.pause()   # Pause pressed -- tick() stops accumulating, but
+                          # nothing already recorded is touched
+        engine.resume()  # Resume pressed -- accumulation picks back up,
+                          # appending to what was recorded before the pause
+        ...
         audio = engine.stop()  # Stop pressed -- returns the full mixed np.ndarray;
                                 # sources keep running so monitoring continues
         ...
@@ -429,6 +434,7 @@ class AudioMixerEngine:
         self._mixed_chunks = []               # accumulated only while recording
         self._mixed_preview = deque(maxlen=ENGINE_SAMPLE_RATE)
         self._running = False                 # True only while actually recording
+        self._paused = False                  # True while recording is paused (see pause()/resume())
 
     # ---------------- source management ----------------
 
@@ -483,6 +489,7 @@ class AudioMixerEngine:
             raise RuntimeError("Add at least one source before starting the mixer.")
         self._mixed_chunks = []
         self._mixed_preview.clear()
+        self._paused = False
         errors = []
         for source in self.sources.values():
             if source.is_active:
@@ -498,7 +505,29 @@ class AudioMixerEngine:
         """Stop accumulating into the saved recording. Sources keep running
         afterward -- monitoring continues seamlessly between recordings."""
         self._running = False
+        self._paused = False
         return self.get_mixed_audio()
+
+    def pause(self):
+        """Suspend accumulating into the saved recording without finalizing
+        it -- unlike stop(), _mixed_chunks is left untouched so resume()
+        can pick up where this left off. Sources (and therefore the VU
+        meters/waveform) keep running exactly as during normal recording;
+        only the tick()->_mixed_chunks append is skipped meanwhile, so the
+        pause doesn't get baked into the saved audio as silence."""
+        self._running = False
+        self._paused = True
+
+    def resume(self):
+        """Resume accumulating into the saved recording after pause().
+        Unlike start(), this does NOT clear the previously accumulated
+        audio -- the new audio is simply appended to what came before."""
+        self._paused = False
+        self._running = True
+
+    @property
+    def is_paused(self):
+        return self._paused
 
     def shutdown(self):
         """Stop everything, including live monitoring. Call this when the

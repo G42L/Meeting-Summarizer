@@ -1,7 +1,7 @@
 # Feature To-Do List
 
 ## Recording
-- [ ] Pause/resume recording — currently only start/stop. A long meeting with a break means either recording through silence or stitching two separate files manually.
+- [x] Pause/resume recording — currently only start/stop. A long meeting with a break means either recording through silence or stitching two separate files manually.
 
 ## Live Transcription
 - [ ] Rolling/live transcript while recording, instead of only after recording stops.

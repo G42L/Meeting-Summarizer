@@ -58,6 +58,7 @@ Table of Contents
 # Features
 * 🎛️ **Multi-source Audio Mixer Engine** – record your microphone and system/Teams audio (loopback) at the same time, mixed live into one stream. Add as many sources as you like; each gets its own gain slider, mute button, and VU meter.
 * 🎤 Live recording with a real‑time **mixed** VU meter and scrolling waveform display.
+* ⏸️ **Pause/Resume recording** – pause for a break without ending the session or leaving dead air in the saved audio; resume picks up right where you left off. Also bound to `Ctrl+Alt+P`. See [Recording](#Recording).
 * 📂 Load audio files in common formats (WAV, MP3, M4A, FLAC, OGG, AAC).
 * 🗣️ Transcription using either:
     * faster‑whisper (Python, recommended) – automatically used if installed, loads from the local cache first so repeat runs need no network access.
@@ -582,6 +583,7 @@ Run the executable file in ```dist```.
 4. Audio Monitor – shows the live **mixed** waveform and VU meter during recording.
 5. Control Buttons:
     * Record – start/stop recording (also bound to `Ctrl+Alt+R`).
+    * Pause/Resume – pause an in-progress recording without ending it (also bound to `Ctrl+Alt+P`); only enabled while recording. See [Recording](#Recording).
     * Load Audio – load an existing audio file for processing.
     * Cancel – cancel the job currently being processed.
     * Clear Log – clear the log/summary display.
@@ -594,7 +596,8 @@ Run the executable file in ```dist```.
 2. Adjust each source's gain/mute if needed; the mini VU meters confirm each one is picking up audio.
 3. Choose your Whisper model and LLM backend/model.
 4. Click 🎤 Record – the combined waveform and VU meter will show the live mixed input.
-5. When finished, click ⏹ Stop – the mixed recording is saved as one WAV file and automatically added to the processing queue.
+5. Need a break? Click ⏸ Pause (or `Ctrl+Alt+P`) – the sources keep monitoring (waveform/VU meters stay live) but nothing more is added to the saved recording. Click ▶️ Resume to pick back up — the new audio is appended to what you already recorded, with no dead air from the pause baked in. You can pause/resume as many times as you like within one recording.
+6. When finished, click ⏹ Stop – the mixed recording (including everything from before and after any pauses) is saved as one WAV file and automatically added to the processing queue.
 
 # Loading an Existing Audio File
 * Click 📂 Load Audio and select a file (WAV, MP3, M4A, FLAC, OGG, AAC are supported).
