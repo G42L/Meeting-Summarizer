@@ -10,16 +10,20 @@ individual voices).
 
 Requires:
   - pyannote.audio installed (`pip install pyannote.audio`)
-  - a Hugging Face account, an access token, and having accepted the terms
-    for the gated "pyannote/speaker-diarization-3.1" model on huggingface.co
-  - network access the first time (to download the model); fully offline
-    afterward, same shape as the faster-whisper model cache.
+  - the *first* time only: a Hugging Face account, an access token, and
+    having accepted the terms for the gated "pyannote/speaker-diarization-3.1"
+    model on huggingface.co, to download it once. Every run after that is
+    fully offline and needs no token at all -- diarize() always tries the
+    local cache first (same shape as the faster-whisper model cache) and
+    only asks for a token if that fails.
 
 Degrades gracefully like the optional nvidia-ml-py GPU-stats dependency
 (see sysmon.py / requirements.txt): if pyannote.audio isn't installed,
 is_available() reports that cleanly instead of raising, and callers are
 expected to skip diarization and fall back to the plain transcript.
 """
+
+MODEL_NAME = "pyannote/speaker-diarization-3.1"
 
 
 def is_available():
@@ -31,6 +35,32 @@ def is_available():
         return False
 
 
+def is_model_cached_locally():
+    """
+    Cheap, synchronous check for whether MODEL_NAME has already been
+    downloaded to the local Hugging Face cache. A pure filesystem/metadata
+    scan (huggingface_hub.scan_cache_dir()) -- no torch import, no model
+    loading -- so it's safe to call directly from the GUI thread without
+    freezing the UI, unlike actually loading the pipeline.
+
+    Used by the "Label speakers" checkbox to decide whether it needs to
+    prompt for a token at all. Not a perfect guarantee (a corrupted/
+    partial cache would still read as cached here) -- diarize() itself is
+    the real, authoritative attempt (it also tries local_files_only
+    first); this is just a fast heuristic so most users, most of the
+    time, never see the token prompt.
+    """
+    try:
+        from huggingface_hub import scan_cache_dir
+    except ImportError:
+        return False
+    try:
+        cache_info = scan_cache_dir()
+    except Exception:
+        return False
+    return any(repo.repo_id == MODEL_NAME for repo in cache_info.repos)
+
+
 def diarize(audio_file, hf_token, log):
     """
     Run speaker diarization on audio_file. Returns a list of
@@ -39,6 +69,10 @@ def diarize(audio_file, hf_token, log):
     for the first-time model download, etc.) -- each failure logs a
     specific reason via `log(str)` rather than raising, so callers can
     fall back to the plain transcript instead of failing the whole job.
+
+    Always tries the local cache first, with no token -- most calls, once
+    the model has been downloaded once, need hf_token to be nothing at
+    all. Only falls back to a token-authenticated download if that fails.
     """
     try:
         from pyannote.audio import Pipeline
@@ -46,22 +80,30 @@ def diarize(audio_file, hf_token, log):
         log("❌ pyannote.audio not installed -- can't run diarization.")
         return None
 
-    if not hf_token:
-        log(
-            "❌ Diarization requires a Hugging Face access token (with the gated "
-            "'pyannote/speaker-diarization-3.1' model's terms accepted at "
-            "huggingface.co) -- set one in Whisper Model settings."
-        )
-        return None
-
+    pipeline = None
     try:
-        log("⏳ Loading speaker-diarization model (downloads once, then cached)...")
-        pipeline = Pipeline.from_pretrained(
-            "pyannote/speaker-diarization-3.1", use_auth_token=hf_token,
-        )
-    except Exception as e:
-        log(f"❌ Failed to load diarization model: {e}")
-        return None
+        log("⏳ Loading speaker-diarization model from local cache (no network)...")
+        pipeline = Pipeline.from_pretrained(MODEL_NAME, local_files_only=True)
+        log("✅ Model loaded from local cache -- no token needed.")
+    except Exception:
+        pipeline = None
+
+    if pipeline is None:
+        if not hf_token:
+            log(
+                "❌ Diarization model isn't downloaded yet, and no Hugging Face access token "
+                f"was provided -- accept the gated '{MODEL_NAME}' model's terms at "
+                "huggingface.co, then check 'Label speakers (diarization)' again to be "
+                "prompted for a token."
+            )
+            return None
+        try:
+            log("⏳ Downloading speaker-diarization model (one-time, then cached offline)...")
+            pipeline = Pipeline.from_pretrained(MODEL_NAME, use_auth_token=hf_token)
+            log("✅ Model downloaded and cached. Future runs won't need the token again.")
+        except Exception as e:
+            log(f"❌ Failed to load diarization model: {e}")
+            return None
 
     try:
         log("🗣️ Running diarization (this can take a while on CPU)...")

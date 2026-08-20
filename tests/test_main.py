@@ -10,10 +10,26 @@ import random
 from pathlib import Path
 
 import pytest
+from PyQt6.QtCore import QSettings
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QMessageBox, QInputDialog, QFileDialog, QApplication
 
 from src import main, vu_meters
+
+
+def _isolate_qsettings(monkeypatch, tmp_path):
+    """
+    Redirects every QSettings("MeetingTranscriber", "MeetingTranscriber")
+    call inside main.py to a throwaway ini file for the duration of one
+    test, instead of the real ~/.config store -- needed by any test that
+    might trigger a settings *write* (e.g. accepting the HF token prompt),
+    since main.MainWindow.closeEvent() unconditionally saves diarization/
+    prompt-style settings on teardown, and an unisolated write here would
+    leak into the developer's real config and potentially poison whatever
+    test runs next (a fresh MainWindow() loads real settings back in).
+    """
+    settings_path = str(tmp_path / "settings.ini")
+    monkeypatch.setattr(main, "QSettings", lambda *a, **k: QSettings(settings_path, QSettings.Format.IniFormat))
 
 
 @pytest.fixture
@@ -198,8 +214,16 @@ def test_open_folder_falls_back_to_cwd_when_transcripts_dir_missing(tmp_path, mo
 # (on_use_cli_toggled, on_diarization_toggled)
 # ---------------------------------------------------------------------
 
-def test_diarization_toggle_enables_hf_token_field_and_label(main_window):
+# These four tests are only exercising the enable/disable *wiring* between
+# diarization_check / use_cli_check / the HF token field -- not the
+# model-availability check + token-prompt dance in on_diarization_toggled
+# (covered separately below), which would otherwise pop a real blocking
+# QInputDialog in a headless test run. is_available() is patched False so
+# checking the box is a no-op past the enable/disable toggling.
+
+def test_diarization_toggle_enables_hf_token_field_and_label(main_window, monkeypatch):
     win = main_window
+    monkeypatch.setattr(main.diarization, "is_available", lambda: False)
     assert win.hf_token_edit.isEnabled() is False
     assert win.hf_token_label.isEnabled() is False
 
@@ -212,8 +236,9 @@ def test_diarization_toggle_enables_hf_token_field_and_label(main_window):
     assert win.hf_token_label.isEnabled() is False
 
 
-def test_use_cli_toggled_disables_diarization_and_token_while_checked(main_window):
+def test_use_cli_toggled_disables_diarization_and_token_while_checked(main_window, monkeypatch):
     win = main_window
+    monkeypatch.setattr(main.diarization, "is_available", lambda: False)
     win.diarization_check.setChecked(True)
 
     win.use_cli_check.setChecked(True)
@@ -223,8 +248,9 @@ def test_use_cli_toggled_disables_diarization_and_token_while_checked(main_windo
     assert win.hf_token_label.isEnabled() is False
 
 
-def test_use_cli_toggled_off_restores_diarization_and_token_if_previously_checked(main_window):
+def test_use_cli_toggled_off_restores_diarization_and_token_if_previously_checked(main_window, monkeypatch):
     win = main_window
+    monkeypatch.setattr(main.diarization, "is_available", lambda: False)
     win.diarization_check.setChecked(True)
     win.use_cli_check.setChecked(True)
 
@@ -237,6 +263,7 @@ def test_use_cli_toggled_off_restores_diarization_and_token_if_previously_checke
 
 def test_use_cli_toggled_off_leaves_diarization_off_if_it_was_off(tmp_path, monkeypatch, main_window):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(main.diarization, "is_available", lambda: False)
     win = main_window
     assert win.diarization_check.isChecked() is False
 
@@ -246,6 +273,89 @@ def test_use_cli_toggled_off_leaves_diarization_off_if_it_was_off(tmp_path, monk
     assert win.diarization_check.isChecked() is False
     assert win.hf_token_edit.isEnabled() is False
     assert win.hf_token_label.isEnabled() is False
+
+
+# ---------------------------------------------------------------------
+# on_diarization_toggled -- model-availability check + token-prompt flow
+# ---------------------------------------------------------------------
+
+def test_diarization_toggle_skips_prompt_when_model_already_cached(main_window, monkeypatch, tmp_path):
+    _isolate_qsettings(monkeypatch, tmp_path)
+    win = main_window
+    win.hf_token_edit.setText("")  # a prior test's leftover token, if any, must not affect this one
+    monkeypatch.setattr(main.diarization, "is_available", lambda: True)
+    monkeypatch.setattr(main.diarization, "is_model_cached_locally", lambda: True)
+    prompted = []
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: prompted.append(1) or ("", False))
+
+    win.diarization_check.setChecked(True)
+
+    assert not prompted
+    assert win.diarization_check.isChecked() is True
+
+
+def test_diarization_toggle_prompts_when_model_not_cached(main_window, monkeypatch, tmp_path):
+    _isolate_qsettings(monkeypatch, tmp_path)
+    win = main_window
+    win.hf_token_edit.setText("")
+    monkeypatch.setattr(main.diarization, "is_available", lambda: True)
+    monkeypatch.setattr(main.diarization, "is_model_cached_locally", lambda: False)
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("hf_typedtoken", True))
+
+    win.diarization_check.setChecked(True)
+
+    assert win.diarization_check.isChecked() is True
+    assert win.hf_token_edit.text() == "hf_typedtoken"
+    win.hf_token_edit.setText("")  # don't leak this token into whatever closeEvent() saves on teardown
+
+
+def test_diarization_toggle_unchecks_when_prompt_cancelled(main_window, monkeypatch, tmp_path):
+    _isolate_qsettings(monkeypatch, tmp_path)
+    win = main_window
+    win.hf_token_edit.setText("")
+    monkeypatch.setattr(main.diarization, "is_available", lambda: True)
+    monkeypatch.setattr(main.diarization, "is_model_cached_locally", lambda: False)
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("", False))
+
+    win.diarization_check.setChecked(True)
+
+    assert win.diarization_check.isChecked() is False
+
+
+def test_diarization_toggle_skips_prompt_when_token_already_on_file(main_window, monkeypatch, tmp_path):
+    _isolate_qsettings(monkeypatch, tmp_path)
+    win = main_window
+    win.hf_token_edit.setText("hf_alreadyset")
+    monkeypatch.setattr(main.diarization, "is_available", lambda: True)
+    # is_model_cached_locally deliberately not patched -- if it were called
+    # despite a token already being present, this would blow up, proving
+    # the early-return happens before that check.
+    monkeypatch.setattr(
+        main.diarization, "is_model_cached_locally",
+        lambda: (_ for _ in ()).throw(AssertionError("should not be called")),
+    )
+    prompted = []
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: prompted.append(1) or ("", False))
+
+    win.diarization_check.setChecked(True)
+
+    assert not prompted
+    assert win.diarization_check.isChecked() is True
+    win.hf_token_edit.setText("")  # don't leak this token into whatever closeEvent() saves on teardown
+
+
+def test_diarization_toggle_skips_check_when_pyannote_not_available(main_window, monkeypatch, tmp_path):
+    _isolate_qsettings(monkeypatch, tmp_path)
+    win = main_window
+    win.hf_token_edit.setText("")
+    monkeypatch.setattr(main.diarization, "is_available", lambda: False)
+    prompted = []
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: prompted.append(1) or ("", False))
+
+    win.diarization_check.setChecked(True)
+
+    assert not prompted
+    assert win.diarization_check.isChecked() is True
 
 
 # ---------------------------------------------------------------------
@@ -600,6 +710,8 @@ def test_hf_token_field_visibly_greys_out_under_dark_palette(main_window, monkey
     """
     from PyQt6.QtGui import QPalette
     from PyQt6.QtWidgets import QApplication
+
+    monkeypatch.setattr(main.diarization, "is_available", lambda: False)
 
     app = QApplication.instance()
     original_palette = QPalette(app.palette())

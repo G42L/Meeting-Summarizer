@@ -316,8 +316,10 @@ Checking **"Label speakers (diarization)"** tags each line of the transcript by 
 
 * **faster‑whisper only** – whisper‑cli's plain-text output has no per-segment timestamps to align speakers against, so this checkbox is greyed out (and unchecked) whenever "Use whisper‑cli" is enabled, and vice versa.
 * Requires the `pyannote.audio` package (not installed by default — see [Installation](#Installation)), which in turn pulls in `torch`. If it isn't installed, the app logs a clear message and falls back to the plain transcript instead of failing the job.
-* Requires a free [Hugging Face](https://huggingface.co) account, an access token, and having accepted the terms for the gated `pyannote/speaker-diarization-3.1` model on huggingface.co. Paste the token into the **HF Token** field next to the checkbox — it's remembered across restarts.
-* The very first run downloads the diarization model (one-time network access, same shape as a Whisper model's first download); after that it runs fully offline.
+* **Token only asked for once, and only if actually needed.** The moment you check the box, the app checks whether the diarization model is already downloaded:
+    * **Already downloaded** – nothing else happens; the checkbox just stays checked. No Hugging Face account or token needed at all.
+    * **Not downloaded yet** – a small window pops up asking for a Hugging Face access token (with the gated `pyannote/speaker-diarization-3.1` model's terms accepted at [huggingface.co](https://huggingface.co)). Paste it in and it's remembered across restarts — you won't be asked again once the model's cached. Cancelling (or leaving it blank) simply unchecks the box again.
+* The token, when needed, is only used for that one-time download; diarization itself always tries the local cache first and runs fully offline once the model's downloaded.
 
 # History (Past Sessions)
 A thin handle sits permanently at the left edge of the window — hover over it to slide out a panel listing every past session from `./transcripts/`, newest first, each with a short preview of its summary. It collapses automatically when you move the mouse away, so it never takes up space you're not using it.

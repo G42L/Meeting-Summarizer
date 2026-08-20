@@ -44,6 +44,7 @@ from . import llm_backend
 from . import pipeline
 from . import sysmon
 from . import resources
+from . import diarization
 
 # How much audio the live-transcript preview (see LiveTranscriptionWorker)
 # batches up before running Whisper on it. Shorter = preview text lands
@@ -1092,20 +1093,28 @@ class MainWindow(QMainWindow):
         self.diarization_check.setIcon(self._icon("users"))
         self._track_icon(lambda: self.diarization_check.setIcon(self._icon("users")))
         self.diarization_check.setToolTip(
-            "Requires the faster-whisper backend (not whisper-cli), pyannote.audio installed, "
-            "and a Hugging Face token with the gated 'pyannote/speaker-diarization-3.1' model's "
-            "terms accepted at huggingface.co"
+            "Requires the faster-whisper backend (not whisper-cli) and pyannote.audio installed. "
+            "If the model isn't downloaded yet, checking this will prompt for a Hugging Face token "
+            "(with the gated 'pyannote/speaker-diarization-3.1' model's terms accepted at "
+            "huggingface.co) -- only needed once, to download it."
         )
         self.diarization_check.toggled.connect(self.on_diarization_toggled)
         options_row1.addWidget(self.diarization_check)
+        options_row1.addStretch()
+
+        # hf_token_label/hf_token_edit are intentionally NOT added to any
+        # visible layout -- on_diarization_toggled()/_prompt_for_hf_token()
+        # now handle the token entirely via a one-time popup dialog when
+        # it's actually needed, so a permanently-visible field would just
+        # be redundant clutter. Still real widgets (not a plain string
+        # attribute) so the existing isEnabled()-driven enable/disable
+        # wiring, settings load/save, and job wiring don't need to change.
         self.hf_token_label = QLabel("HF Token:")
         self.hf_token_label.setEnabled(False)
-        options_row1.addWidget(self.hf_token_label)
         self.hf_token_edit = QLineEdit()
         self.hf_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.hf_token_edit.setPlaceholderText("hf_...")
         self.hf_token_edit.setEnabled(False)
-        options_row1.addWidget(self.hf_token_edit, stretch=1)
         whisper_group_layout.addLayout(options_row1)
 
         options_row2 = QHBoxLayout()
@@ -2192,7 +2201,13 @@ class MainWindow(QMainWindow):
             self.diarization_check.setChecked(False)
         self.diarization_check.setEnabled(not checked)
         if not checked and getattr(self, "_diarization_was_checked", False):
+            # Programmatic restore, not the user actively checking the box
+            # -- skip the model-availability/token-prompt dance below,
+            # it already ran (or didn't need to) the first time this got
+            # checked.
+            self._suppress_diarization_check = True
             self.diarization_check.setChecked(True)
+            self._suppress_diarization_check = False
 
         # Same story for live transcript -- it feeds in-memory numpy chunks
         # straight into faster-whisper, which whisper-cli (a subprocess
@@ -2207,6 +2222,43 @@ class MainWindow(QMainWindow):
     def on_diarization_toggled(self, checked):
         self.hf_token_edit.setEnabled(checked)
         self.hf_token_label.setEnabled(checked)
+
+        if not checked or getattr(self, "_suppress_diarization_check", False):
+            return
+        if not diarization.is_available() or self.hf_token_edit.text().strip():
+            # Nothing to check here: pyannote isn't installed (diarize()
+            # will just skip diarization and log why, during the actual
+            # job -- no point duplicating that message now), or a token's
+            # already on file and will work regardless of cache state.
+            return
+        if diarization.is_model_cached_locally():
+            self.append_log("✅ Speaker-diarization model already downloaded -- no token needed.")
+            return
+        self._prompt_for_hf_token()
+
+    def _prompt_for_hf_token(self):
+        """
+        Only reached when 'Label speakers (diarization)' was just checked,
+        pyannote.audio is installed, no token is already on file, and the
+        model isn't cached locally -- i.e. exactly the one situation where
+        a token is actually required right now. Declining leaves the
+        checkbox unchecked rather than checked-but-broken.
+        """
+        token, ok = QInputDialog.getText(
+            self, "Hugging Face Token Needed",
+            "The speaker-diarization model hasn't been downloaded yet.\n\n"
+            "Enter a Hugging Face access token with the gated\n"
+            f"'{diarization.MODEL_NAME}' model's terms accepted at\n"
+            "huggingface.co -- needed once, to download it:",
+            QLineEdit.EchoMode.Password,
+        )
+        if ok and token.strip():
+            self.hf_token_edit.setText(token.strip())
+            self._save_diarization_settings()
+            self.append_log("🔑 Token saved -- the model will download the next time diarization runs.")
+        else:
+            self.append_log("⚠️ No token provided -- unchecking 'Label speakers (diarization)'.")
+            self.diarization_check.setChecked(False)
 
     def on_live_transcript_toggled(self, checked):
         self.live_transcript_group.setVisible(checked)
