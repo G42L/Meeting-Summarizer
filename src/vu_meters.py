@@ -2649,6 +2649,17 @@ VU_METER_STYLES = [
     ("Daw Peak Rms VU-meter",       DawPeakRmsVUMeter,        0.15, 180),
 ]
 
+# The single standard width for every VU meter in the app: the small
+# per-source meters in the Audio Sources panel (main.py's SourceRow), and
+# the big combined meter built by create_vu_meter() below. Without this,
+# each style's own natural width (60-180px, see the registry above) would
+# make the Audio Monitor panel -- and the whole window, since it's sized
+# to its content's minimum -- change width every time you pick a different
+# VU Style. Pulled from the registry (the "Daw Peak Rms VU-meter" entry,
+# the widest style) rather than a second hardcoded 180, so the two can't
+# drift apart if that entry's width is ever tuned.
+VU_METER_WIDTH = next(width for name, _cls, _alpha, width in VU_METER_STYLES if name == "Daw Peak Rms VU-meter")
+
 
 def vu_meter_style_names():
     """Display names for the VU-style QComboBox, in registry order."""
@@ -2660,16 +2671,20 @@ def create_vu_meter(index, parent=None):
     Build a fresh VU-meter widget for VU_METER_STYLES[index] with the
     same sizing/background setup every style needs. Returns a ready-to-use
     QWidget you can drop straight into a layout.
+
+    Width is always fixed to VU_METER_WIDTH, regardless of that style's
+    own (usually narrower) registered minimum -- otherwise switching VU
+    Style changes the Audio Monitor panel's width, and since the window is
+    sized to its content's minimum, the *whole window* visibly resizes
+    every time you pick a different style.
     """
     if not (0 <= index < len(VU_METER_STYLES)):
         index = 0
-    _, widget_cls, alpha, min_width = VU_METER_STYLES[index]
+    _, widget_cls, alpha, _min_width = VU_METER_STYLES[index]
 
     w = widget_cls(parent, alpha=alpha)
 
-    if min_width is not None:
-        w.setMinimumWidth(min_width)
-    w.setMaximumWidth(16777215)
+    w.setFixedWidth(VU_METER_WIDTH)
     w.setMinimumHeight(80)
-    w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+    w.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
     return w

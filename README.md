@@ -579,10 +579,10 @@ Run the executable file in ```dist```.
 
 # GUI Overview
 
-1. **Audio Sources** – add one or more microphones and/or system-audio devices; each row has gain, a mute button (short click vs. long press — see [above](#Mute-Button-Short-Click-vs-Long-Press)), and its own VU meter.
-2. Whisper Model – choose the model, toggle whisper‑cli mode, and optionally enable transcript review / speaker diarization / live transcript preview. See [Live Transcript Preview](#Live-Transcript-Preview).
-3. LLM Backend – select your running backend/model, and the Summary Style prompt to use.
-4. Audio Monitor – shows the live **mixed** waveform and VU meter during recording.
+1. **Audio Sources** (top left) – add one or more microphones and/or system-audio devices; each row has gain, a mute button (short click vs. long press — see [above](#Mute-Button-Short-Click-vs-Long-Press)), and its own VU meter.
+2. Audio Monitor (top right, alongside Audio Sources) – shows the live **mixed** waveform and VU meter during recording.
+3. Whisper Model (left, below Audio Sources) – choose the model, toggle whisper‑cli mode, and optionally enable transcript review / speaker diarization / live transcript preview. See [Live Transcript Preview](#Live-Transcript-Preview).
+4. LLM Backend (right, alongside Whisper Model) – select your running backend/model, and the Summary Style prompt to use.
 5. Control Buttons:
     * Record – start/stop recording (also bound to `Ctrl+Alt+R`).
     * Pause/Resume – pause an in-progress recording without ending it (also bound to `Ctrl+Alt+P`); only enabled while recording. See [Recording](#Recording).

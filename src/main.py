@@ -421,13 +421,23 @@ class SourceRow(QWidget):
         self.mute_btn.mode_changed.connect(self._on_mute_mode_changed)
         layout.addWidget(self.mute_btn)
 
-        # Small, fixed-size VU meter just for this one source.
+        # Small VU meter just for this one source. Range-bounded rather
+        # than fixed-width (unlike the big combined meter, see
+        # create_vu_meter()) -- a hard-fixed width here ate into the gain
+        # slider's space at the app's default window size. Letting it
+        # shrink to 90px keeps the row compact normally, while still
+        # growing up to 140px if there's leftover horizontal space (e.g.
+        # the window's been widened).
         self.vu = vu_meters.MiniLEDHorizontalVUMeter(alpha=0.10)
         self.vu.setMinimumHeight(20)
         self.vu.setMaximumHeight(24)
         self.vu.setMinimumWidth(90)
         self.vu.setMaximumWidth(140)
-        layout.addWidget(self.vu)
+        # stretch=1 (the label above claims 2) so this actually gets a
+        # share of any leftover width instead of the label soaking up all
+        # of it -- without a stretch factor here, widening the window
+        # wouldn't grow this meter at all.
+        layout.addWidget(self.vu, stretch=1)
 
         self.remove_btn = HoverColorIconButton("cross-circle", hover_color="#d93025")
         self.remove_btn.setToolTip("Remove this source")
@@ -982,7 +992,67 @@ class MainWindow(QMainWindow):
         self.sources_layout.addWidget(self.no_sources_label)
 
         self.dev_group.setLayout(dev_layout)
-        layout.addWidget(self.dev_group)
+
+        # ----- Audio Visualization (mixed waveform + combined VU) -----
+        # Built here (rather than after LLM Backend, where this used to
+        # live) and placed side-by-side with Audio Sources below -- the two
+        # naturally go together (pick your sources, watch them meter) and
+        # sit at roughly the same height, so a two-column row uses the
+        # window's width instead of stacking six group boxes end-to-end.
+        vis_group = QGroupBox("Audio Monitor (mixed output)")
+        vis_main_layout = QVBoxLayout()
+
+        style_layout = QHBoxLayout()
+        style_layout.addWidget(QLabel("VU Style:"))
+        self.vu_style_combo = QComboBox()
+        self.vu_style_combo.addItems(vu_meters.vu_meter_style_names())
+        self.vu_style_combo.currentIndexChanged.connect(self.switch_vu_style)
+        style_layout.addWidget(self.vu_style_combo)
+        style_layout.addStretch()
+        vis_main_layout.addLayout(style_layout)
+
+        h_layout = QHBoxLayout()
+        self.waveform = vu_meters.WaveformDisplay()
+        # stretch=1 so it claims *all* extra width in a wide window --
+        # vu_container is fixed-width (see create_vu_meter()'s
+        # VU_METER_WIDTH), not a competitor for the surplus, and giving it
+        # a nonzero stretch too would make Qt reserve it a share it can
+        # never actually use (its own maximumSize is capped by its fixed-
+        # width child), leaving that reserved share as unfilled dead space
+        # instead of going to the waveform.
+        h_layout.addWidget(self.waveform, stretch=1)
+
+        self.vu_container = QWidget()
+        self.vu_container_layout = QVBoxLayout(self.vu_container)
+        self.vu_container_layout.setContentsMargins(0, 0, 0, 0)
+        h_layout.addWidget(self.vu_container, stretch=0)
+
+        # self.vumeter is normally created by switch_vu_style itself (see
+        # the None guard in that method), fired by setCurrentIndex() below
+        # via the currentIndexChanged signal connected above. But Qt only
+        # *emits* that signal when the index actually changes -- if
+        # saved_index happens to be 0 (the combo's already-selected index
+        # right after addItems(), before setCurrentIndex ever runs), the
+        # signal never fires and self.vumeter is silently left None, empty
+        # for the entire session. Call switch_vu_style directly whenever
+        # that happens instead of relying on the signal.
+        self.vumeter = None
+        self.DEFAULT_VU_STYLE_INDEX = 4  # "Analog VU-meter" -- matches the previous default
+        settings = QSettings("MeetingTranscriber", "MeetingTranscriber")
+        saved_index = settings.value("vu_style/index", self.DEFAULT_VU_STYLE_INDEX, type=int)
+        if not (0 <= saved_index < self.vu_style_combo.count()):
+            saved_index = self.DEFAULT_VU_STYLE_INDEX
+        self.vu_style_combo.setCurrentIndex(saved_index)
+        if self.vumeter is None:
+            self.switch_vu_style(saved_index)
+
+        vis_main_layout.addLayout(h_layout)
+        vis_group.setLayout(vis_main_layout)
+
+        top_row = QHBoxLayout()
+        top_row.addWidget(self.dev_group, stretch=1)
+        top_row.addWidget(vis_group, stretch=1)
+        layout.addLayout(top_row)
 
         # ----- Whisper model -----
         self.whisper_group = QGroupBox("Whisper Model")
@@ -1003,17 +1073,20 @@ class MainWindow(QMainWindow):
         whisper_layout.addWidget(refresh_whisper_btn)
         whisper_group_layout.addLayout(whisper_layout)
 
-        # Review + diarization share one row (rather than a row each) to
-        # save vertical space -- both are secondary, occasional-use options
-        # for the same "before summarizing" step.
-        options_layout = QHBoxLayout()
+        # Split across two rows instead of one -- all five used to share a
+        # single QHBoxLayout, which was already tight at full window width
+        # and became illegible (labels truncated to a few letters) once
+        # Whisper Model dropped to half the window's width alongside LLM
+        # Backend. Review + diarization share a row (both are "before
+        # summarizing" options), live transcript + TTS share the other.
+        options_row1 = QHBoxLayout()
         self.review_transcript_check = QCheckBox("Review transcript before summarizing")
         self.review_transcript_check.setIcon(self._icon("edit-3"))
         self._track_icon(lambda: self.review_transcript_check.setIcon(self._icon("edit-3")))
         self.review_transcript_check.setToolTip(
             "Pause after transcription so you can read/edit the text before it's sent to the LLM"
         )
-        options_layout.addWidget(self.review_transcript_check)
+        options_row1.addWidget(self.review_transcript_check)
 
         self.diarization_check = QCheckBox("Label speakers (diarization)")
         self.diarization_check.setIcon(self._icon("users"))
@@ -1024,16 +1097,18 @@ class MainWindow(QMainWindow):
             "terms accepted at huggingface.co"
         )
         self.diarization_check.toggled.connect(self.on_diarization_toggled)
-        options_layout.addWidget(self.diarization_check)
+        options_row1.addWidget(self.diarization_check)
         self.hf_token_label = QLabel("HF Token:")
         self.hf_token_label.setEnabled(False)
-        options_layout.addWidget(self.hf_token_label)
+        options_row1.addWidget(self.hf_token_label)
         self.hf_token_edit = QLineEdit()
         self.hf_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.hf_token_edit.setPlaceholderText("hf_...")
         self.hf_token_edit.setEnabled(False)
-        options_layout.addWidget(self.hf_token_edit, stretch=1)
+        options_row1.addWidget(self.hf_token_edit, stretch=1)
+        whisper_group_layout.addLayout(options_row1)
 
+        options_row2 = QHBoxLayout()
         self.live_transcript_check = QCheckBox("Live transcript (preview)")
         self.live_transcript_check.setIcon(self._icon("audio-wave"))
         self._track_icon(lambda: self.live_transcript_check.setIcon(self._icon("audio-wave")))
@@ -1043,7 +1118,7 @@ class MainWindow(QMainWindow):
             "final transcript is still generated from the full recording after you press Stop."
         )
         self.live_transcript_check.toggled.connect(self.on_live_transcript_toggled)
-        options_layout.addWidget(self.live_transcript_check)
+        options_row2.addWidget(self.live_transcript_check)
 
         self.tts_check = QCheckBox("Read summary aloud (TTS)")
         self.tts_check.setIcon(self._icon("volume-high"))
@@ -1052,11 +1127,11 @@ class MainWindow(QMainWindow):
             "Requires piper-tts installed (`pip install piper-tts`). Saves a summary.wav "
             "alongside the transcript; the voice model downloads once on first use."
         )
-        options_layout.addWidget(self.tts_check)
-        whisper_group_layout.addLayout(options_layout)
+        options_row2.addWidget(self.tts_check)
+        options_row2.addStretch()
+        whisper_group_layout.addLayout(options_row2)
 
         self.whisper_group.setLayout(whisper_group_layout)
-        layout.addWidget(self.whisper_group)
 
         self._load_diarization_settings()
 
@@ -1136,48 +1211,17 @@ class MainWindow(QMainWindow):
         llm_group_layout.addWidget(self.custom_prompt_edit)
 
         self.llm_group.setLayout(llm_group_layout)
-        layout.addWidget(self.llm_group)
+
+        # Whisper Model (left) and LLM Backend (right) side-by-side, same
+        # two-column treatment as Audio Sources / Audio Monitor above --
+        # they naturally pair up (transcription settings, then
+        # summarization settings) and sit at roughly the same height.
+        second_row = QHBoxLayout()
+        second_row.addWidget(self.whisper_group, stretch=1)
+        second_row.addWidget(self.llm_group, stretch=1)
+        layout.addLayout(second_row)
 
         self._load_prompt_style_settings()
-
-        # ----- Audio Visualization (mixed waveform + combined VU) -----
-        vis_group = QGroupBox("Audio Monitor (mixed output)")
-        vis_main_layout = QVBoxLayout()
-
-        style_layout = QHBoxLayout()
-        style_layout.addWidget(QLabel("VU Style:"))
-        self.vu_style_combo = QComboBox()
-        self.vu_style_combo.addItems(vu_meters.vu_meter_style_names())
-        self.vu_style_combo.currentIndexChanged.connect(self.switch_vu_style)
-        style_layout.addWidget(self.vu_style_combo)
-        style_layout.addStretch()
-        vis_main_layout.addLayout(style_layout)
-
-        h_layout = QHBoxLayout()
-        self.waveform = vu_meters.WaveformDisplay()
-        h_layout.addWidget(self.waveform, stretch=4)
-
-        self.vu_container = QWidget()
-        self.vu_container_layout = QVBoxLayout(self.vu_container)
-        self.vu_container_layout.setContentsMargins(0, 0, 0, 0)
-        h_layout.addWidget(self.vu_container, stretch=1)
-
-        # self.vumeter is created by switch_vu_style itself (see the None
-        # guard in that method) -- setting the combo index below fires the
-        # currentIndexChanged signal we already connected above, which
-        # builds and adds the widget exactly once. Don't also build it
-        # here, or it gets added to the layout twice.
-        self.vumeter = None
-        self.DEFAULT_VU_STYLE_INDEX = 4  # "Analog VU-meter" -- matches the previous default
-        settings = QSettings("MeetingTranscriber", "MeetingTranscriber")
-        saved_index = settings.value("vu_style/index", self.DEFAULT_VU_STYLE_INDEX, type=int)
-        if not (0 <= saved_index < self.vu_style_combo.count()):
-            saved_index = self.DEFAULT_VU_STYLE_INDEX
-        self.vu_style_combo.setCurrentIndex(saved_index)
-
-        vis_main_layout.addLayout(h_layout)
-        vis_group.setLayout(vis_main_layout)
-        layout.addWidget(vis_group)
 
         # ----- Live transcript preview (only shown when the checkbox above
         # is on -- most of the time this stays hidden to save vertical

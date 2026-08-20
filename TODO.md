@@ -22,10 +22,9 @@
 - [ ] Move secret storage (existing HF token, plus any future cloud LLM API keys) off plaintext QSettings and onto the OS-native encrypted credential store via the `keyring` library, across all three platforms: Secret Service/GNOME Keyring or KWallet on Linux, Keychain on macOS, Credential Manager on Windows. Needs a graceful fallback for environments with no keyring backend available (minimal/headless Linux, bare WSL, some CI containers) — warn and refuse to save rather than silently falling back to plaintext.
 
 ## Layout
-- [ ] Two-column layout instead of one long vertical stack of group boxes, rolled out in two steps:
-    1. Audio Sources on the left, Audio Monitor (mixed output) to its right.
-    2. Whisper Model on the left, LLM Backend to its right.
-  Uses horizontal space instead of stacking group boxes end-to-end; needs a sane minimum-width fallback (stack back to one column) for narrower windows.
+Two-column layout instead of one long vertical stack of group boxes, rolled out in two steps:
+- [x] Step 1: Audio Sources on the left, Audio Monitor (mixed output) to its right.
+- [x] Step 2: Whisper Model on the left, LLM Backend to its right.
 
 ## Post-summary Actions - Nice to have
 - [ ] Ways to push the summary out — email, clipboard-to-Slack, calendar follow-up, task-tracker for action items. Currently read/copy/save only.
