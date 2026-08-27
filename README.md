@@ -24,7 +24,7 @@ A cross‑platform desktop application built with PyQt6 that records **one or mo
 
 | Light Theme | Dark Theme |
 |------------|------------|
-| ![Light Theme](doc/images/light-theme.png) | ![Dark Theme](doc/images/dark-theme.png) |
+| ![Light Theme](doc/images/mockup-light.svg) | ![Dark Theme](doc/images/mockup-dark.svg) |
 | Main application window using the light theme. | Main application window using the dark theme. |
 
 > The screenshots above predate the multi-source Audio Sources panel described below — the rest of the window is unchanged.
