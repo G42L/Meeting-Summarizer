@@ -2771,8 +2771,17 @@ class ClassicArcVUMeter(QWidget):
         # ---- Red overload band (0 .. +3 dB) ----
         band_rect = QRectF(center_x - db_tick_r, center_y - db_tick_r,
                             db_tick_r * 2, db_tick_r * 2)
-        start_angle_16 = int(self._norm_to_angle(self.zero_norm) * 16)
-        span_16 = int(-(self._norm_to_angle(1.0) - self._norm_to_angle(self.zero_norm)) * 16)
+        # Qt's spanAngle is positive=counterclockwise, matching our angle
+        # convention (point_at uses plain cos/sin), so a decreasing target
+        # angle needs a plain negative span -- (target - start), no extra
+        # sign flip. (This span is only ~20 deg here, so the old inverted
+        # sign's wrong-direction sweep landed close enough to look right
+        # at a glance -- see GreenRedArcVUMeter, where a much wider green
+        # span made the same bug obvious.)
+        a_zero = self._norm_to_angle(self.zero_norm)
+        a_end = self._norm_to_angle(1.0)
+        start_angle_16 = int(a_zero * 16)
+        span_16 = int((a_end - a_zero) * 16)
         painter.setPen(QPen(QColor(190, 55, 45), 5))
         painter.drawArc(band_rect, start_angle_16, span_16)
 
@@ -2848,6 +2857,233 @@ class ClassicArcVUMeter(QWidget):
         painter.setBrush(QBrush(QColor(230, 150, 40)))
         painter.drawPath(arrow)
 
+class GreenRedArcVUMeter(QWidget):
+    """
+    Wide-arc studio VU meter with a green (quiet) / red (0 dB and up)
+    zone split, dual dB/percent scale, and "-"/"+" end pegs -- modelled
+    on classic tape-deck VU meter faces where the whole scale (not just
+    an overload band) is colour-coded. No title text, unlike
+    ClassicArcVUMeter, so the arc itself can run bigger.
+    """
+    def __init__(self, parent=None, alpha=0.15):
+        super().__init__(parent)
+        self.setMinimumHeight(80)
+        self.setMaximumHeight(150)
+        self.setMinimumWidth(150)
+        self.level = 0.0
+        self.peak_hold = 0.0
+        self.hold_counter = 0
+
+        self.smooth_level = 0.0
+        self.alpha = alpha
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAutoFillBackground(False)
+        self.setStyleSheet("background: transparent;")
+
+        # Calibration scale (defines norm 0..1 across the needle's full
+        # travel): db_min=-50 matches every other meter in this file --
+        # source.level is raw RMS (see ClassicArcVUMeter's comment for why
+        # a literal -20 floor pins the needle left for almost all real
+        # audio). The *labelled* ticks below only start at -20, same as
+        # the reference face; -50 is an unlabelled "-" peg at the far left.
+        self.scale_points = [
+            (-50, 0.00), (-20, 0.14), (-10, 0.32), (-5, 0.48),
+            (-3, 0.58), (0, 0.72), (3, 0.87), (6, 1.00),
+        ]
+        self.visible_ticks = self.scale_points[1:]
+        self.minor_db = [-15, -7, -4, -2, -1, 1, 2, 4, 5]
+        self.db_min = self.scale_points[0][0]
+        self.db_max = self.scale_points[-1][0]
+        self.zero_norm = next(n for db, n in self.scale_points if db == 0)
+
+        # Wider than ClassicArcVUMeter's 140 deg -- the reference face's
+        # ticks sweep almost to horizontal, with the "-"/"+" pegs sitting
+        # right at the ends.
+        self.angle_start = 172.0
+        self.angle_end = 8.0
+
+    def _db_to_norm(self, db):
+        """Interpolate db to normalized position (0..1) using scale_points."""
+        if db <= self.scale_points[0][0]:
+            return self.scale_points[0][1]
+        if db >= self.scale_points[-1][0]:
+            return self.scale_points[-1][1]
+        for i in range(len(self.scale_points) - 1):
+            db0, n0 = self.scale_points[i]
+            db1, n1 = self.scale_points[i + 1]
+            if db0 <= db <= db1:
+                t = (db - db0) / (db1 - db0)
+                return n0 + t * (n1 - n0)
+        return 0.0
+
+    def _norm_to_angle(self, norm):
+        return self.angle_start - norm * (self.angle_start - self.angle_end)
+
+    def update_level(self, rms):
+        if rms < 1e-10:
+            db = self.db_min
+        else:
+            db = 20 * np.log10(rms)
+            db = max(self.db_min, min(self.db_max, db))
+
+        level = self._db_to_norm(db)
+        self.level = max(0.0, min(1.0, level))
+
+        # Smooth the level (inertia)
+        self.smooth_level = self.smooth_level * (1.0 - self.alpha) + self.level * self.alpha
+        self.smooth_level = max(0.0, min(1.0, self.smooth_level))
+        self.level = self.smooth_level
+
+        # Peak hold
+        if self.level > self.peak_hold:
+            self.peak_hold = self.level
+            self.hold_counter = 30
+        else:
+            if self.hold_counter > 0:
+                self.hold_counter -= 1
+            else:
+                self.peak_hold *= 0.995
+                if self.peak_hold < 0.01:
+                    self.peak_hold = 0.0
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = self.rect()
+        w = rect.width()
+        h = rect.height()
+
+        # ---- Background: dark studio vignette ----
+        grad = QRadialGradient(w / 2, h * 0.2, max(w, h) * 0.95)
+        grad.setColorAt(0.0, QColor(55, 55, 58))
+        grad.setColorAt(1.0, QColor(8, 8, 9))
+        painter.setPen(QPen(QColor(40, 40, 42), 1))
+        painter.setBrush(QBrush(grad))
+        painter.drawRoundedRect(rect, 8, 8)
+
+        # ---- Pivot / arc geometry ----
+        center_x = w // 2
+        center_y = h - 6
+        radius = max(20, min(w // 2 - 24, center_y - 28))
+
+        tick_r = radius
+        pct_r = radius - int(radius * 0.18)
+        green = QColor(30, 190, 60)
+        red = QColor(220, 40, 30)
+        light = QColor(235, 235, 235)
+
+        def point_at(angle_deg, r):
+            rad = np.radians(angle_deg)
+            return center_x + r * np.cos(rad), center_y - r * np.sin(rad)
+
+        # ---- Green / red zone band ----
+        band_rect = QRectF(center_x - tick_r, center_y - tick_r, tick_r * 2, tick_r * 2)
+        a_start = self._norm_to_angle(0.0)
+        a_zero = self._norm_to_angle(self.zero_norm)
+        a_end = self._norm_to_angle(1.0)
+        # Qt's spanAngle is positive=counterclockwise, and our angle
+        # convention increases counterclockwise too (point_at uses plain
+        # cos/sin), so a decreasing target angle needs a plain negative
+        # span -- (target - start), no extra sign flip.
+        painter.setPen(QPen(green, 4))
+        painter.drawArc(band_rect, int(a_start * 16), int((a_zero - a_start) * 16))
+        painter.setPen(QPen(red, 4))
+        painter.drawArc(band_rect, int(a_zero * 16), int((a_end - a_zero) * 16))
+
+        # ---- dB ticks + labels (bold, white, like the reference face) ----
+        tick_size = max(7, w // 24)
+        font = painter.font()
+        font.setBold(True)
+        font.setPointSize(tick_size)
+        painter.setFont(font)
+        for db, norm in self.visible_ticks:
+            angle = self._norm_to_angle(norm)
+            color = red if db >= 0 else green
+            x1, y1 = point_at(angle, tick_r - 10)
+            x2, y2 = point_at(angle, tick_r)
+            painter.setPen(QPen(color, 2))
+            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+
+            lx, ly = point_at(angle, tick_r + 16)
+            painter.setPen(light)
+            painter.drawText(int(lx) - 14, int(ly) - 8, 28, 16,
+                              Qt.AlignmentFlag.AlignCenter, str(abs(db)))
+
+        # ---- Minor ticks (unlabelled) ----
+        for db in self.minor_db:
+            angle = self._norm_to_angle(self._db_to_norm(db))
+            color = red if db >= 0 else green
+            x1, y1 = point_at(angle, tick_r - 6)
+            x2, y2 = point_at(angle, tick_r)
+            painter.setPen(QPen(color, 2))
+            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+
+        # ---- "-" / "+" end pegs ----
+        painter.setFont(font)
+        painter.setPen(light)
+        neg_x, neg_y = point_at(self.angle_start, tick_r + 16)
+        pos_x, pos_y = point_at(self.angle_end, tick_r + 16)
+        painter.drawText(int(neg_x) - 10, int(neg_y) - 8, 20, 16, Qt.AlignmentFlag.AlignCenter, "-")
+        painter.drawText(int(pos_x) - 10, int(pos_y) - 8, 20, 16, Qt.AlignmentFlag.AlignCenter, "+")
+
+        # ---- Percent sub-scale (0..100%, spans the same arc as -50..0 dB) ----
+        pct_font = painter.font()
+        pct_font.setBold(False)
+        pct_font.setPointSize(max(6, tick_size - 2))
+        painter.setFont(pct_font)
+        for pct in (0, 20, 40, 60, 80, 100):
+            angle = self._norm_to_angle((pct / 100.0) * self.zero_norm)
+            x1, y1 = point_at(angle, pct_r - 4)
+            x2, y2 = point_at(angle, pct_r + 4)
+            painter.setPen(green)
+            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+            lx, ly = point_at(angle, pct_r - 11)
+            painter.setPen(light)
+            label = f"{pct}%" if pct == 100 else str(pct)
+            painter.drawText(int(lx) - 14, int(ly) - 6, 28, 12,
+                              Qt.AlignmentFlag.AlignCenter, label)
+
+        # ---- "VU" mark ----
+        # Anchored just above the pivot dome (not the widget's bottom
+        # edge) -- at compact heights the dome sits close enough to the
+        # bottom that a bottom-aligned label used to run straight through
+        # it instead of sitting above it.
+        dome_r = max(6, min(w // 20, h // 11))
+        vu_bottom = center_y - int(dome_r * 0.8)
+        vu_font = painter.font()
+        vu_font.setBold(True)
+        vu_font.setPointSize(max(8, min(w // 16, h // 9)))
+        painter.setFont(vu_font)
+        painter.setPen(QColor(240, 240, 240))
+        painter.drawText(QRect(0, vu_bottom - 14, w, 14),
+                          Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom, "VU")
+
+        # ---- Peak hold hairline ----
+        if self.peak_hold > 0.01:
+            angle = self._norm_to_angle(self.peak_hold)
+            x1, y1 = point_at(angle, tick_r - 12)
+            x2, y2 = point_at(angle, tick_r + 2)
+            painter.setPen(QPen(QColor(255, 255, 255, 200), 2))
+            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+
+        # ---- Needle ----
+        needle_angle = self._norm_to_angle(self.level)
+        tip_x, tip_y = point_at(needle_angle, radius + 6)
+        painter.setPen(QPen(QColor(240, 165, 40), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(center_x, center_y, int(tip_x), int(tip_y))
+
+        # Pivot dome -- a small filled bump under the needle base, like
+        # the rounded knob the reference photo's needle pivots from.
+        dome_rect = QRectF(center_x - dome_r, center_y - dome_r * 0.7, dome_r * 2, dome_r * 1.4)
+        dome_grad = QLinearGradient(dome_rect.left(), dome_rect.top(), dome_rect.left(), dome_rect.bottom())
+        dome_grad.setColorAt(0.0, QColor(250, 200, 110))
+        dome_grad.setColorAt(1.0, QColor(200, 130, 40))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(dome_grad))
+        painter.drawEllipse(dome_rect)
+
 # ----------------------------------------------------------------------
 # Style registry + factory
 # ----------------------------------------------------------------------
@@ -2862,6 +3098,7 @@ VU_METER_STYLES = [
     ("Analog VU-meter",             AnalogStyleVUMeter,       0.10, 80),
     ("Classic VU-meter (Sifam)",    ClassicHorizontalVUMeter, 0.15, None),
     ("Classic Arc VU-meter",        ClassicArcVUMeter,        0.15, 140),
+    ("Green/Red Arc VU-meter",      GreenRedArcVUMeter,       0.15, 150),
     ("Glass VU-meter",              GlassVUMeter,             0.10, 80),
     ("Liquid Glass",                LiquidGlassVUMeter,       0.10, 60),
     ("Neon Retro",                  NeonRetroVUMeter,         0.10, 80),
