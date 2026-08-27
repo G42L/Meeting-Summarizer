@@ -2625,6 +2625,229 @@ class DawPeakRmsVUMeter(QWidget):
             label = f"+{db}" if db > 0 else str(db)
             painter.drawText(x - 12, y + 8, 24, 12, Qt.AlignmentFlag.AlignCenter, label)
 
+class ClassicArcVUMeter(QWidget):
+    """
+    Shallow-arc broadcast VU meter (Sifam/Shure style): a needle sweeps a
+    wide, low arc rather than the full semicircle AnalogStyleVUMeter uses,
+    with a dual scale -- dB ticks (-20..+3, red past 0) above the arc and
+    a 0-100% ticks below it -- plus an "L-LEVEL dB" title and a "VU" mark,
+    matching the classic tape-deck/mixer VU meter face.
+    """
+    def __init__(self, parent=None, alpha=0.15):
+        super().__init__(parent)
+        self.setMinimumHeight(80)
+        self.setMaximumHeight(150)
+        self.setMinimumWidth(140)
+        self.level = 0.0
+        self.peak_hold = 0.0
+        self.hold_counter = 0
+
+        # Smoothing for the needle
+        self.smooth_level = 0.0
+        self.alpha = alpha          # lower = more inertia
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAutoFillBackground(False)
+        self.setStyleSheet("background: transparent;")
+
+        # Sifam-style nonlinear scale: (db_value, normalized position 0..1).
+        # db_min matches every other meter in this file (-50, not the -20
+        # the reference photo's face shows) because source.level in
+        # audio_engine.py is raw RMS (0..1-ish) -- typical speech sits
+        # around -40..-20 dBFS. Floored at -20 like the photo, the needle
+        # would stay pinned at the left peg for almost all real input and
+        # never appear to move. -50..-20 is left as unlabeled travel below
+        # the "-20" tick so the needle still reads quiet-to-loud smoothly.
+        self.scale_points = [
+            (-50, 0.00), (-20, 0.30), (-10, 0.48), (-7, 0.55), (-5, 0.61),
+            (-3, 0.67), (-2, 0.73), (-1, 0.79), (0, 0.85),
+            (1, 0.90), (2, 0.95), (3, 1.00),
+        ]
+        self.db_min = self.scale_points[0][0]
+        self.db_max = self.scale_points[-1][0]
+        self.zero_norm = next(n for db, n in self.scale_points if db == 0)
+
+        # Arc geometry, in degrees measured from the positive x-axis
+        # (0 = due right, 90 = due up, 180 = due left) -- 140 deg wide,
+        # centred on the top of the pivot circle so both ends sit at the
+        # same height, like the reference meter face.
+        self.angle_start = 160.0   # db_min end (left)
+        self.angle_end = 20.0      # db_max end (right)
+
+    def _db_to_norm(self, db):
+        """Interpolate db to normalized position (0..1) using the Sifam scale."""
+        if db <= self.scale_points[0][0]:
+            return self.scale_points[0][1]
+        if db >= self.scale_points[-1][0]:
+            return self.scale_points[-1][1]
+        for i in range(len(self.scale_points) - 1):
+            db0, n0 = self.scale_points[i]
+            db1, n1 = self.scale_points[i + 1]
+            if db0 <= db <= db1:
+                t = (db - db0) / (db1 - db0)
+                return n0 + t * (n1 - n0)
+        return 0.0
+
+    def _norm_to_angle(self, norm):
+        return self.angle_start - norm * (self.angle_start - self.angle_end)
+
+    def update_level(self, rms):
+        if rms < 1e-10:
+            db = self.db_min
+        else:
+            db = 20 * np.log10(rms)
+            db = max(self.db_min, min(self.db_max, db))
+
+        level = self._db_to_norm(db)
+        self.level = max(0.0, min(1.0, level))
+
+        # Smooth the level (inertia)
+        self.smooth_level = self.smooth_level * (1.0 - self.alpha) + self.level * self.alpha
+        self.smooth_level = max(0.0, min(1.0, self.smooth_level))
+        self.level = self.smooth_level
+
+        # Peak hold
+        if self.level > self.peak_hold:
+            self.peak_hold = self.level
+            self.hold_counter = 30
+        else:
+            if self.hold_counter > 0:
+                self.hold_counter -= 1
+            else:
+                self.peak_hold *= 0.995
+                if self.peak_hold < 0.01:
+                    self.peak_hold = 0.0
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = self.rect()
+        w = rect.width()
+        h = rect.height()
+
+        # ---- Background ----
+        painter.setPen(QPen(QColor(70, 65, 95), 1))
+        painter.setBrush(QBrush(QColor(51, 43, 74, 235)))
+        painter.drawRoundedRect(rect, 8, 8)
+
+        # ---- Title ----
+        # Run vertically up a strip on the left edge instead of sitting
+        # above the arc -- frees the whole top margin for the arc itself,
+        # so radius can grow with the leftover height, not just width.
+        title_size = max(6, h // 16)
+        title_strip_w = title_size + 12
+        painter.save()
+        title_font = painter.font()
+        title_font.setPointSize(title_size)
+        painter.setFont(title_font)
+        painter.setPen(QColor(230, 150, 40))
+        painter.translate(title_strip_w - 4, h - 6)
+        painter.rotate(-90)
+        painter.drawText(0, 0, h - 12, title_strip_w,
+                          Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "L-LEVEL  dB")
+        painter.restore()
+
+        # ---- Pivot / arc geometry ----
+        # The arc now only needs to clear the title strip on the left and
+        # a small top margin, not the title's own height, so radius can
+        # use almost the full remaining width/height.
+        top_pad = 6
+        usable_w = w - title_strip_w
+        center_x = title_strip_w + usable_w // 2
+        center_y = h - 8
+        # "- 22" (not "- 14") leaves room for the -50/-20 tick labels'
+        # own overhang past db_tick_r so they don't run back into the
+        # title strip at the arc's left end.
+        radius = max(20, min(usable_w // 2 - 22, center_y - top_pad - 12))
+
+        db_tick_r = radius
+        pct_tick_r = radius - int(radius * 0.28)
+
+        def point_at(angle_deg, r):
+            rad = np.radians(angle_deg)
+            return center_x + r * np.cos(rad), center_y - r * np.sin(rad)
+
+        # ---- Red overload band (0 .. +3 dB) ----
+        band_rect = QRectF(center_x - db_tick_r, center_y - db_tick_r,
+                            db_tick_r * 2, db_tick_r * 2)
+        start_angle_16 = int(self._norm_to_angle(self.zero_norm) * 16)
+        span_16 = int(-(self._norm_to_angle(1.0) - self._norm_to_angle(self.zero_norm)) * 16)
+        painter.setPen(QPen(QColor(190, 55, 45), 5))
+        painter.drawArc(band_rect, start_angle_16, span_16)
+
+        # ---- dB scale ticks + labels ----
+        tick_size = max(6, w // 32)
+        font = painter.font()
+        font.setPointSize(tick_size)
+        painter.setFont(font)
+        for db, norm in self.scale_points:
+            angle = self._norm_to_angle(norm)
+            x1, y1 = point_at(angle, db_tick_r - 8)
+            x2, y2 = point_at(angle, db_tick_r)
+            color = QColor(190, 55, 45) if db >= 0 else QColor(230, 150, 40)
+            painter.setPen(QPen(color, 2))
+            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+
+            lx, ly = point_at(angle, db_tick_r + 11)
+            label = str(abs(db)) if db != 3 else "3+"
+            painter.setPen(color)
+            painter.drawText(int(lx) - 10, int(ly) - 6, 20, 12,
+                              Qt.AlignmentFlag.AlignCenter, label)
+
+        # ---- Percent sub-scale (0 .. 100%, spans the same arc as -20..0 dB) ----
+        # Drawn at a noticeably smaller radius than the dB scale so the two
+        # rows of labels stay visually separated instead of colliding.
+        pct_font = painter.font()
+        pct_font.setPointSize(max(6, tick_size - 1))
+        painter.setFont(pct_font)
+        painter.setPen(QColor(200, 130, 40))
+        for pct in (0, 20, 40, 60, 80, 100):
+            norm = (pct / 100.0) * self.zero_norm
+            angle = self._norm_to_angle(norm)
+            x1, y1 = point_at(angle, pct_tick_r - 3)
+            x2, y2 = point_at(angle, pct_tick_r + 3)
+            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+            lx, ly = point_at(angle, pct_tick_r - 11)
+            label = f"{pct}%" if pct == 100 else str(pct)
+            painter.drawText(int(lx) - 14, int(ly) - 6, 28, 12,
+                              Qt.AlignmentFlag.AlignCenter, label)
+
+        # ---- "VU" mark, just above the pivot ----
+        vu_font = painter.font()
+        vu_font.setPointSize(max(9, w // 20))
+        vu_font.setBold(True)
+        painter.setFont(vu_font)
+        painter.setPen(QColor(230, 150, 40))
+        painter.drawText(rect.adjusted(0, 0, 0, -6), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom, "VU")
+
+        # ---- Peak hold hairline ----
+        if self.peak_hold > 0.01:
+            angle = self._norm_to_angle(self.peak_hold)
+            x1, y1 = point_at(angle, db_tick_r - 10)
+            x2, y2 = point_at(angle, db_tick_r + 2)
+            painter.setPen(QPen(QColor(255, 255, 255, 200), 2))
+            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+
+        # ---- Needle ----
+        needle_angle = self._norm_to_angle(self.level)
+        tip_x, tip_y = point_at(needle_angle, radius - 6)
+        painter.setPen(QPen(QColor(230, 150, 40), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(center_x, center_y, int(tip_x), int(tip_y))
+
+        # Needle tip arrowhead, echoing the reference photo's pointed tip
+        head_len = 8
+        hx1, hy1 = point_at(needle_angle - 4, radius - 6 - head_len)
+        hx2, hy2 = point_at(needle_angle + 4, radius - 6 - head_len)
+        arrow = QPainterPath()
+        arrow.moveTo(tip_x, tip_y)
+        arrow.lineTo(hx1, hy1)
+        arrow.lineTo(hx2, hy2)
+        arrow.closeSubpath()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(230, 150, 40)))
+        painter.drawPath(arrow)
+
 # ----------------------------------------------------------------------
 # Style registry + factory
 # ----------------------------------------------------------------------
@@ -2638,6 +2861,7 @@ VU_METER_STYLES = [
     ("Modern VU-meter",             ModernVUMeter,            0.35, 80),
     ("Analog VU-meter",             AnalogStyleVUMeter,       0.10, 80),
     ("Classic VU-meter (Sifam)",    ClassicHorizontalVUMeter, 0.15, None),
+    ("Classic Arc VU-meter",        ClassicArcVUMeter,        0.15, 140),
     ("Glass VU-meter",              GlassVUMeter,             0.10, 80),
     ("Liquid Glass",                LiquidGlassVUMeter,       0.10, 60),
     ("Neon Retro",                  NeonRetroVUMeter,         0.10, 80),
